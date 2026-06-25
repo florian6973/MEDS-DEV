@@ -52,7 +52,12 @@ def resolve_codes(zip_path: Path, concept_set_ids: set[int]) -> list[str]:
 
 
 def code_block(codes: list[str], indent: str = "      ") -> str:
-    """Render a YAML block-style code list."""
+    """Render a YAML block-style code list.
+
+    NB: the caller nests this under ``code: { any: [...] }``. ACES requires the ``any`` wrapper
+    for a list of codes (it compiles to ``pl.col("code").is_in(...)``); a bare YAML list under
+    ``code:`` is NOT supported and fails at evaluation with a List-type cast error.
+    """
     return "\n".join(f'{indent}- "{c}"' for c in codes)
 
 
@@ -151,7 +156,8 @@ predicates:
   # a dataset MAY override `ami` to restrict to inpatient/ER-recorded AMI.
   ami:
     code:
-{code_block(ami_codes)}
+      any:
+{code_block(ami_codes, indent="        ")}
 
   # --- at-risk eligibility predicate (AMI at Risk, CS1 u CS3 u CS4: differential / ischemic
   #     heart disease / AMI embeddings). Over-inclusion: the CS4 "ten closest embeddings" set
@@ -159,7 +165,8 @@ predicates:
   #     correlation, which ACES cannot express (see report #6). ---
   risk_entry:
     code:
-{code_block(risk_codes)}
+      any:
+{code_block(risk_codes, indent="        ")}
 """
 
 

@@ -144,6 +144,22 @@ endpoint may reference the other — so `recent_activity` is `start: end - 730d`
 and `target` is `end: start + 365d` (not `trigger + 365d`). This validates window/predicate/`expr`
 syntax only, not extraction against real data.
 
+**`code` list format (caught only at evaluation):** a code *list* must be written
+`code: { any: [...] }`, never a bare `code: [...]`. ACES compiles `any` to
+`pl.col("code").is_in(...)`; a bare list falls through to `pl.col("code") == <list>` and crashes
+at `.collect()` with `cannot cast List type (inner: 'String', to: 'String')`. `TaskExtractorConfig.load`
+does **not** catch this (it doesn't evaluate the expression) — only a real/synthetic data run does.
+The generator emits the `any:` wrapper; we verify by evaluating each predicate against a tiny MEDS
+frame.
+
+**`code` list format (caught only at evaluation):** a code *list* must be written
+`code: { any: [...] }`, never a bare `code: [...]`. ACES compiles `any` to
+`pl.col("code").is_in(...)`; a bare list falls through to `pl.col("code") == <list>` and crashes
+at `.collect()` with `cannot cast List type (inner: 'String', to: 'String')`. `TaskExtractorConfig.load`
+does **not** catch this (it doesn't evaluate the expression) — only a real/synthetic data run does.
+The generator emits the `any:` wrapper; we verify by evaluating each predicate against a tiny MEDS
+frame.
+
 ## Open items for next iteration
 
 - Run full extraction against a real MIMIC-IV MEDS shard (syntax is validated; data run is not).
