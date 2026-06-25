@@ -87,7 +87,7 @@ def main() -> None:
     all_subs = pl.concat([c["subject_id"] for c in cohorts.values()]).unique()
     meds = (
         pl.scan_parquet(str(args.meds / "**" / "*.parquet"))
-        .filter(pl.col("subject_id").cast(pl.Int64).is_in(all_subs.implode()))
+        .filter(pl.col("subject_id").cast(pl.Int64).is_in(all_subs.to_list()))
         .select(pl.col("subject_id").cast(pl.Int64), pl.col("time").cast(pl.Datetime("ns")), pl.col("code"))
         .collect()
     )
@@ -108,7 +108,7 @@ def main() -> None:
             continue
 
         # time-space: nearest admission
-        shared = coh.filter(pl.col("subject_id").is_in(pl.Series(in_meds).implode())).sort("prediction_time")
+        shared = coh.filter(pl.col("subject_id").is_in(in_meds)).sort("prediction_time")
         near = shared.join_asof(adm, left_on="prediction_time", right_on="adm_time",
                                 by="subject_id", strategy="nearest").with_columns(
             ((pl.col("prediction_time") - pl.col("adm_time")).dt.total_nanoseconds() / 1e9 / 86400).abs().alias("d"))
