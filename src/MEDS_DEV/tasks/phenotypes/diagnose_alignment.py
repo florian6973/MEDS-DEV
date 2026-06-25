@@ -55,25 +55,33 @@ def load_cohort(p: Path) -> pl.DataFrame:
     return df.select(cols).drop_nulls(["subject_id", "prediction_time"])
 
 
-def codes_at(meds: pl.DataFrame, subject: int, t, window_days: int = 1):
-    """Return (status, delta_days, codes) for the MEDS events nearest to time ``t`` for ``subject``."""
+def codes_at(meds: pl.DataFrame, subject: int, t, adm_regex: str, window_days: int = 1):
+    """Return (status, delta_days, codes, n_visit) for the MEDS events nearest to ``t``.
+
+    ``codes`` is ordered so visit/admission codes (matching ``adm_regex``) come first, so they are
+    never hidden behind diagnosis codes when the list is truncated. ``n_visit`` counts them.
+    """
     m = meds.filter(pl.col("subject_id") == subject)
     if m.height == 0:
-        return "absent", None, []
+        return "absent", None, [], 0
     exact = m.filter(pl.col("time") == t)
     if exact.height:
-        return "exact", 0.0, exact["code"].to_list()
-    # drop null-time events (MEDS static rows: birth/demographics) before distance math
-    m = m.with_columns(((pl.col("time") - t).dt.total_nanoseconds() / 1e9 / 86400).alias("d")).filter(
-        pl.col("d").is_not_null()
-    )
-    if m.height == 0:
-        return "no-timed-events", None, []
-    win = m.filter(pl.col("d").abs() <= window_days)
-    if win.height:
-        return f"<={window_days}d", float(win["d"].abs().min()), win.sort(pl.col("d").abs())["code"].head(4).to_list()
-    nearest = m.sort(pl.col("d").abs()).head(1)
-    return "nearest", float(nearest["d"][0]), nearest["code"].to_list()
+        rel, status, dd = exact, "exact", 0.0
+    else:
+        # drop null-time events (MEDS static rows: birth/demographics) before distance math
+        m = m.with_columns(((pl.col("time") - t).dt.total_nanoseconds() / 1e9 / 86400).alias("d")).filter(
+            pl.col("d").is_not_null()
+        )
+        if m.height == 0:
+            return "no-timed-events", None, [], 0
+        win = m.filter(pl.col("d").abs() <= window_days)
+        if win.height:
+            rel, status, dd = win, f"<={window_days}d", float(win["d"].abs().min())
+        else:
+            rel = m.sort(pl.col("d").abs()).head(1)
+            status, dd = "nearest", float(rel["d"][0])
+    rel = rel.with_columns(pl.col("code").str.contains(adm_regex).alias("_v")).sort("_v", descending=True)
+    return status, dd, rel["code"].to_list(), int(rel["_v"].sum())
 
 
 def main() -> None:
@@ -126,11 +134,13 @@ def main() -> None:
         print(f"\n  CODES AT {name} PREDICTION TIMES (sample of {args.n}):")
         sample = shared.unique(subset=["subject_id", "prediction_time"]).sort(["subject_id", "prediction_time"]).head(args.n)
         for r in sample.iter_rows(named=True):
-            status, dd, codes = codes_at(meds, r["subject_id"], r["prediction_time"])
+            status, dd, codes, n_visit = codes_at(meds, r["subject_id"], r["prediction_time"], args.admission_regex)
             delta = "" if dd in (0.0, None) else f" (off {dd:+.1f}d)"
-            shown = ", ".join(codes[:4]) + (" ..." if len(codes) > 4 else "") if codes else "(no events)"
+            vtag = f"visit={n_visit}" if codes else "visit=0"
+            shown = (", ".join(codes[:5]) + (f"  (+{len(codes) - 5} more)" if len(codes) > 5 else "")
+                     if codes else "(no events)")
             print(f"    subj {r['subject_id']} @ {r['prediction_time']} label={r['label']} "
-                  f"-> [{status}{delta}] {shown}")
+                  f"-> [{status}{delta}] {vtag} | {shown}")
         print()
 
 
