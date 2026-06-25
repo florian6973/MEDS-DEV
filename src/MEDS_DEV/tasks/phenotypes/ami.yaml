@@ -70,8 +70,11 @@ windows:
 #
 #   `???` = genuinely dataset-specific (visit encoding varies per MEDS ETL);
 #           each dataset's predicates.yaml must supply these.
-#   `ami` / `risk_entry` = dataset-agnostic concept-set code lists, inlined from the ATLAS
-#           concept sets (regenerate with build_ami_task.py).
+#   `ami` / `risk_entry` = concept-set code lists in ATLAS `VOCAB//CODE` form (e.g.
+#           ICD10CM//I21.19, SNOMED//...). A dataset whose MEDS uses a different code format
+#           MUST override these in its predicates.yaml (ACES merges dataset predicates over
+#           task ones). E.g. MIMIC-IV writes `DIAGNOSIS//ICD//10//I2119` -- generate its
+#           override with: build_ami_task.py --emit dataset-predicates --format mimic
 # ---------------------------------------------------------------------------
 predicates:
   # --- dataset-specific structural predicates ---

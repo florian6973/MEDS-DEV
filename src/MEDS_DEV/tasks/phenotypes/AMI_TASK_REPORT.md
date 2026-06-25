@@ -114,8 +114,19 @@ These vary by MEDS ETL and must be supplied per dataset (or in the dataset `pred
   [`datasets/MIMIC-IV/predicates.yaml`](../../datasets/MIMIC-IV/predicates.yaml) under the names
   `ED_registration` / `hospital_admission`).
 
+**Concept-set codes are dataset-specific in practice.** The task inlines `ami`/`risk_entry` in
+ATLAS `VOCAB//CODE` form (e.g. `ICD10CM//I21.19`), but **MEDS datasets encode codes differently**,
+so each dataset must **override** these predicates in its `predicates.yaml` (ACES merges dataset
+predicates *over* task ones). Example: MIMIC-IV MEDS writes diagnoses as
+`DIAGNOSIS//ICD//{9,10}//<code-without-dots>` (e.g. `DIAGNOSIS//ICD//10//I2119`), and has no
+SNOMED/CIEL codes at all — so the ATLAS-format task codes match **nothing**, and a first run produced
+an empty cohort (every trigger dropped at `at_risk_entry` because `risk_entry` matched zero events).
+The MIMIC override is generated with `build_ami_task.py --emit dataset-predicates --format mimic`
+(keeps ICD-9/10 only, strips dots → 65 `ami` + 1624 `risk_entry` codes) and appended to
+[`datasets/MIMIC-IV/predicates.yaml`](../../datasets/MIMIC-IV/predicates.yaml).
+
 The recent-activity gate uses the built-in `_ANY_EVENT` (no predicate to define). The concept-set
-predicates `ami` and `risk_entry` are **dataset-agnostic** (standard + source
+predicates `ami` and `risk_entry` in the **task** are **ATLAS-format** (standard + source
 `VOCABULARY//CODE` across SNOMED/ICD9CM/ICD10CM/…), so they are inlined directly in the task. This
 is a deliberate departure from the usual MEDS-DEV `???`-per-dataset pattern, because the codes come
 from fixed ATLAS concept sets, not from a dataset's coding choices. (Open question for review:
