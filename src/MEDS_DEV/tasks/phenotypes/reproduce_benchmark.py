@@ -119,10 +119,9 @@ def main() -> None:
     de = (cond.filter(pl.col("condition_concept_id").is_in(direct))
           .group_by("person_id").agg(pl.col("cd").min().alias("entry_direct")))
     emb = cond.filter(pl.col("condition_concept_id").is_in(EMB)).select("person_id", "cd")
-    # CS4 corroborated by >=2 occurrences -> the 2nd CS4 date
+    # CS4 corroborated by >=2 occurrences -> the 2nd CS4 date (null if the patient has <2)
     emb_cnt = (emb.group_by("person_id").agg(pl.col("cd").sort().alias("ds"))
-               .with_columns(pl.when(pl.col("ds").list.len() >= 2).then(pl.col("ds").list.get(1))
-                             .otherwise(None).alias("entry_cs4_count")))
+               .with_columns(pl.col("ds").list.get(1, null_on_oob=True).alias("entry_cs4_count")))
     # CS4 corroborated by smoking -> first CS4 at/after first smoking obs
     smoke = (obs.filter(pl.col("value_as_concept_id").cast(pl.Int64, strict=False).is_in(SMOKING_CONCEPTS))
              .with_columns(d("observation_date").alias("sd")).group_by("person_id").agg(pl.col("sd").min().alias("smoke")))
