@@ -15,8 +15,17 @@ cohort and the *ACES* output. If reproduced ~ ATLAS -> our understanding is comp
 Concept ids come from the standard "Concept ID" column of each concept-set zip's includedConcepts.csv
 (post descendant/exclusion resolution), matched against condition_concept_id / visit_concept_id.
 
-Documented approximations: CS4 corroboration (>=2 CS4 OR CS4+smoking), case "during inpatient/ER"
-via condition.visit_occurrence_id linkage, single merged observation_period, ERA collapse in python.
+Exact Circe/SQL semantics implemented:
+  - at-risk entry = First of {CS1/CS3 condition; CS4 condition corroborated by >=2 prior CS4 OR a
+    CS4-concept observation with a smoking value}; minus the "no Acute-MI(CS0) in [entry-7d, entry-1d]"
+    inclusion rule.
+  - cohort end = end of the observation period containing the entry (Circe default, no EndStrategy);
+    the 2yr lookback compares to the earliest obs-period start.
+  - case = Acute-MI(CS3) whose date is inside an inpatient/ER visit(CS2) interval
+    [visit_start, visit_end], ERA-collapsed (intervals [AMI, AMI+7] padded 180 -> merge if gap<=187).
+  - visit windowing + label exactly per cohort_pos_neg_query.sql.
+Only remaining simplification: comparisons are at date (not datetime) granularity, immaterial for the
+2-yr / 1-yr windows.
 
 Usage:
     python reproduce_benchmark.py \
@@ -99,63 +108,72 @@ def main() -> None:
     print(f"concept ids: IHD {len(IHD)} | DIFF {len(DIFF)} | EMB {len(EMB)} | AMI {len(AMI)} | VISIT {len(VISIT_IPER)}")
 
     cond = load(args.omop, "condition_occurrence",
-                ["condition_concept_id", "condition_start_date", "visit_occurrence_id"], subjects)
+                ["condition_concept_id", "condition_start_date"], subjects)
     cond = cond.with_columns(pl.col("condition_concept_id").cast(pl.Int64), d("condition_start_date").alias("cd"))
     visit = load(args.omop, "visit_occurrence",
-                 ["visit_concept_id", "visit_start_date", "visit_start_datetime", "visit_occurrence_id"], subjects)
+                 ["visit_concept_id", "visit_start_date", "visit_end_date", "visit_start_datetime"], subjects)
     dtcol = "visit_start_datetime" if "visit_start_datetime" in visit.columns else "visit_start_date"
+    vend = "visit_end_date" if "visit_end_date" in visit.columns else "visit_start_date"
     visit = visit.with_columns(
-        pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"),
+        pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"), d(vend).alias("ved"),
         pl.col(dtcol).cast(pl.Utf8).str.slice(0, 19).str.to_datetime(strict=False).alias("vt"))
     drug = load(args.omop, "drug_exposure", ["drug_exposure_start_date"], subjects).with_columns(
         d("drug_exposure_start_date").alias("cd"))
-    obs = load(args.omop, "observation", ["value_as_concept_id", "observation_date"], subjects)
+    obs = load(args.omop, "observation", ["observation_concept_id", "value_as_concept_id", "observation_date"], subjects)
     op = load(args.omop, "observation_period",
               ["observation_period_start_date", "observation_period_end_date"], subjects)
     op = op.with_columns(d("observation_period_start_date").alias("ostart"), d("observation_period_end_date").alias("oend"))
-    opg = op.group_by("person_id").agg(pl.col("ostart").min(), pl.col("oend").max())
 
-    # ---- at-risk entry ----
+    # ---- at-risk entry = First of {CS1/CS3 directly, corroborated CS4} ----
     de = (cond.filter(pl.col("condition_concept_id").is_in(direct))
-          .group_by("person_id").agg(pl.col("cd").min().alias("entry_direct")))
+          .group_by("person_id").agg(pl.col("cd").min().alias("e_direct")))
     emb = cond.filter(pl.col("condition_concept_id").is_in(EMB)).select("person_id", "cd")
-    # CS4 corroborated by >=2 occurrences -> the 2nd CS4 date (null if the patient has <2)
-    emb_cnt = (emb.group_by("person_id").agg(pl.col("cd").sort().alias("ds"))
-               .with_columns(pl.col("ds").list.get(1, null_on_oob=True).alias("entry_cs4_count")))
-    # CS4 corroborated by smoking -> first CS4 at/after first smoking obs
-    smoke = (obs.filter(pl.col("value_as_concept_id").cast(pl.Int64, strict=False).is_in(SMOKING_CONCEPTS))
-             .with_columns(d("observation_date").alias("sd")).group_by("person_id").agg(pl.col("sd").min().alias("smoke")))
-    emb_first = emb.group_by("person_id").agg(pl.col("cd").min().alias("emb_first"))
-    cs4_smoke = (emb_first.join(smoke, on="person_id", how="inner")
-                 .with_columns(pl.max_horizontal("emb_first", "smoke").alias("entry_cs4_smoke")))
-    entry = (opg.select("person_id")
+    # (a) >=2 CS4 in (-inf, index]  -> earliest qualifying index = the 2nd CS4 condition date
+    e_a = (emb.group_by("person_id").agg(pl.col("cd").sort().alias("ds"))
+           .with_columns(pl.col("ds").list.get(1, null_on_oob=True).alias("e_cs4a")))
+    # (b) >=1 Observation with concept in CS4 AND smoking value in (-inf, index]
+    #     -> earliest CS4 condition at/after the first such observation
+    qsmoke = (obs.filter(pl.col("observation_concept_id").cast(pl.Int64, strict=False).is_in(EMB)
+                         & pl.col("value_as_concept_id").cast(pl.Int64, strict=False).is_in(SMOKING_CONCEPTS))
+              .group_by("person_id").agg(d("observation_date").min().alias("smoke0")))
+    e_b = (emb.join(qsmoke, on="person_id", how="inner").filter(pl.col("cd") >= pl.col("smoke0"))
+           .group_by("person_id").agg(pl.col("cd").min().alias("e_cs4b")))
+    entry = (op.select("person_id").unique()
              .join(de, on="person_id", how="left")
-             .join(emb_cnt.select("person_id", "entry_cs4_count"), on="person_id", how="left")
-             .join(cs4_smoke.select("person_id", "entry_cs4_smoke"), on="person_id", how="left")
-             .with_columns(pl.min_horizontal("entry_direct", "entry_cs4_count", "entry_cs4_smoke").alias("entry"))
+             .join(e_a.select("person_id", "e_cs4a"), on="person_id", how="left")
+             .join(e_b, on="person_id", how="left")
+             .with_columns(pl.min_horizontal("e_direct", "e_cs4a", "e_cs4b").alias("entry"))
              .filter(pl.col("entry").is_not_null()))
-    # inclusion: drop subjects with an Acute-MI (CS0) in [entry-7d, entry-1d]
+    # inclusion rule: drop subjects with an Acute-MI (CS0) in [entry-7d, entry-1d]
     acute = cond.filter(pl.col("condition_concept_id").is_in(ACUTE_YL)).select("person_id", pl.col("cd").alias("ad"))
     bad = (entry.join(acute, on="person_id", how="left")
            .filter((pl.col("ad") >= pl.col("entry") - pl.duration(days=7)) & (pl.col("ad") <= pl.col("entry") - pl.duration(days=1)))
            .select("person_id").unique())
-    entry = (entry.join(bad.with_columns(pl.lit(True).alias("drop")), on="person_id", how="left")
-             .filter(pl.col("drop").is_null()).select("person_id", "entry").join(opg, on="person_id", how="left"))
+    entry = entry.join(bad.with_columns(pl.lit(True).alias("drop")), on="person_id", how="left").filter(pl.col("drop").is_null())
+    # window bounds: cohort_end = end of the obs period CONTAINING entry (Circe default end strategy);
+    # the 2yr lookback uses the earliest obs-period start (visit qualifies if >= any obs_start + 2yr).
+    contain = (entry.select("person_id", "entry").join(op, on="person_id", how="left")
+               .filter((pl.col("ostart") <= pl.col("entry")) & (pl.col("entry") <= pl.col("oend")))
+               .group_by("person_id").agg(pl.col("oend").min().alias("cohort_end")))
+    opmin = op.group_by("person_id").agg(pl.col("ostart").min().alias("ostart_min"), pl.col("oend").max().alias("oend_max"))
+    entry = (entry.select("person_id", "entry").join(contain, on="person_id", how="left").join(opmin, on="person_id", how="left")
+             .with_columns(pl.coalesce("cohort_end", "oend_max").alias("cohort_end")))
     print(f"at-risk subjects: {entry.height:,}")
 
-    # ---- case cohort: AMI during inpatient/ER, ERA collapse 180d ----
-    amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI))
-              .join(visit.select("person_id", "visit_occurrence_id", "visit_concept_id"),
-                    on=["person_id", "visit_occurrence_id"], how="left")
-              .filter(pl.col("visit_concept_id").is_in(VISIT_IPER))
-              .select("person_id", pl.col("cd").alias("case_d")).unique())
-    cases = collapse_eras(amivis, 180) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
+    # ---- case cohort: Acute-MI(CS3) during an inpatient/ER visit(CS2), ERA collapse 180+7 ----
+    vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
+    amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
+              .join(vip, on="person_id", how="inner")
+              .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
+              .select("person_id", pl.col("ami_d").alias("case_d")).unique())
+    # cohort interval [AMI, AMI+7] padded 180 -> merge if gap <= 187
+    cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
     print(f"case subjects: {cases['person_id'].n_unique() if cases.height else 0:,}")
 
     # ---- visit windowing + labels ----
     V = (visit.join(entry, on="person_id", how="inner")
-         .filter((pl.col("vd") >= pl.col("entry")) & (pl.col("vd") < pl.col("oend"))
-                 & (pl.col("vd") >= pl.col("ostart") + pl.duration(days=365 * MIN_OBS_YEARS)))
+         .filter((pl.col("vd") >= pl.col("entry")) & (pl.col("vd") < pl.col("cohort_end"))
+                 & (pl.col("vd") >= pl.col("ostart_min") + pl.duration(days=365 * MIN_OBS_YEARS)))
          .select("person_id", "vd", "vt").unique())
     cd = pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd")]).drop_nulls().sort(["person_id", "cd"])
     V = V.sort(["person_id", "vd"]).join_asof(cd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd",
