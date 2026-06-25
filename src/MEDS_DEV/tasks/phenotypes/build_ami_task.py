@@ -214,10 +214,10 @@ predicates:
       any:
 {code_block(ami_codes, indent="        ")}
 
-  # --- at-risk eligibility predicate (AMI at Risk, CS1 u CS3: differential for AMI / ischemic
-  #     heart disease). CS4 "ten closest embeddings" is EXCLUDED -- its ATLAS corroboration
-  #     ("(>=2 prior) OR (>=1 + smoking)") is inexpressible in ACES, and uncorroborated CS4 opens
-  #     the at-risk window ~1.6 yr too early (~13x over-generation on CUMC). See report #6. ---
+  # --- at-risk eligibility predicate (AMI at Risk, CS1 u CS3 u CS4: differential / ischemic heart
+  #     disease / ten closest embeddings). CS4 admitted at >=1 (its ATLAS corroboration is
+  #     inexpressible in ACES -> minor over-inclusion, #6). The big over-generation is the missing
+  #     observation-period window bound (#10), not this. See report. ---
   risk_entry:
     code:
       any:
@@ -291,12 +291,12 @@ def main() -> None:
     args = p.parse_args()
 
     ami_codes = transform(resolve_codes(args.case_zip, {3}), args.format)
-    # risk_entry = CS1 (differential) u CS3 (ischemic heart disease). CS4 ("ten closest
-    # embeddings") is intentionally EXCLUDED: ATLAS only admits CS4 with corroboration
-    # ((>=2 prior) OR (>=1 + smoking)), which ACES cannot express, and an uncorroborated single
-    # CS4 code opens the at-risk window a median ~1.6 yr too early -> ~13x point over-generation
-    # vs the benchmark (validated on CUMC). See report #6.
-    risk_codes = transform(resolve_codes(args.risk_zip, {1, 3}), args.format)
+    # risk_entry = CS1 (differential) u CS3 (ischemic heart disease) u CS4 (ten closest embeddings).
+    # CS4's ATLAS corroboration ("(>=2 prior) OR (>=1 + smoking)") is inexpressible in ACES so we
+    # admit it at >=1 (minor over-inclusion, #6). NOTE: the dominant over-generation vs the benchmark
+    # is NOT this -- it is the missing observation-period window bound (#10): the benchmark's at-risk
+    # window is ~1 yr, ACES sweeps the whole multi-decade record. See report #6/#10.
+    risk_codes = transform(resolve_codes(args.risk_zip, {1, 3, 4}), args.format)
     print(f"[{args.format}] ami: {len(ami_codes)} codes | risk_entry: {len(risk_codes)} codes")
 
     if args.emit == "task":
