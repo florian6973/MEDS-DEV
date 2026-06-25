@@ -63,7 +63,12 @@ def codes_at(meds: pl.DataFrame, subject: int, t, window_days: int = 1):
     exact = m.filter(pl.col("time") == t)
     if exact.height:
         return "exact", 0.0, exact["code"].to_list()
-    m = m.with_columns(((pl.col("time") - t).dt.total_nanoseconds() / 1e9 / 86400).alias("d"))
+    # drop null-time events (MEDS static rows: birth/demographics) before distance math
+    m = m.with_columns(((pl.col("time") - t).dt.total_nanoseconds() / 1e9 / 86400).alias("d")).filter(
+        pl.col("d").is_not_null()
+    )
+    if m.height == 0:
+        return "no-timed-events", None, []
     win = m.filter(pl.col("d").abs() <= window_days)
     if win.height:
         return f"<={window_days}d", float(win["d"].abs().min()), win.sort(pl.col("d").abs())["code"].head(4).to_list()

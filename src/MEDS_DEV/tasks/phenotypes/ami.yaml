@@ -29,11 +29,16 @@ trigger: inpatient_or_er_visit
 windows:
   # At-risk eligibility: the patient must already have entered the at-risk population.
   # (Over-inclusion approximation of the ATLAS correlated CS4 criterion -- see report #6.)
+  # Carries index_timestamp (= the trigger/visit = prediction time). It MUST live on a
+  # `start: null` window: ACES reads index from `start_summary.timestamp_at_end`, which only
+  # equals the trigger when start is unbounded. On a bounded-start window (e.g. recent_activity
+  # `start: end - 730d`) it wrongly resolves to `trigger - 730d`.
   at_risk_entry:
     start: null
     end: trigger
     start_inclusive: True
     end_inclusive: True
+    index_timestamp: end
     has:
       risk_entry: (1, None)
   # Exclusion: no AMI may have occurred at or before the prediction visit. This implements
@@ -54,7 +59,6 @@ windows:
     end: trigger
     start_inclusive: True
     end_inclusive: True
-    index_timestamp: end
     has:
       _ANY_EVENT: (1, None)
   # Outcome: first AMI within the 1-year horizon -> positive label.
