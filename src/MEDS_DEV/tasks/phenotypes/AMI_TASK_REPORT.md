@@ -48,7 +48,7 @@ determines each visit's label. The benchmark scores *every* eligible visit, not 
 | 3 | End strategy (index + 7d) | **Dropped** | unused by the labeling SQL |
 | 4 | Collapse 180d (case ERA) | **Dropped** | target only needs AMI *presence* in the year |
 | 5 | At-risk index = "First" | **Re-mapped** — trigger is the visit, entry → look-back gate | prediction is per-visit, not at entry |
-| 6 | Correlated CS4 (≥2 prior **or** +smoking) | **Approximated** — over-inclusion (see below) | ACES can't OR count-thresholds |
+| 6 | Correlated CS4 (≥2 prior **or** +smoking) | **CS4 dropped** — `risk_entry` = CS1∪CS3 (see below) | ACES can't OR count-thresholds; uncorroborated CS4 → ~13× over-generation |
 | 7 | No AMI within 7 days (at-risk inclusion) | **Subsumed** by `no_prior_ami` | "no AMI before visit" is stricter & covers it |
 | 8 | Collapse pad 0 (risk ERA) | **Dropped** | negligible |
 | 9 | ≥1 condition/drug in prior 2yr | **Loosened** — `recent_activity` with `_ANY_EVENT` (see below) | avoids dataset-specific condition/drug predicates |
@@ -68,13 +68,16 @@ encounter interval. **`ami` therefore defaults to the raw Acute-MI concept set.*
 datasets (MIMIC-IV) this is ~equivalent since diagnoses there are inpatient; on claims/OMOP data
 it **over-counts positives**. A dataset MAY override `ami` to an inpatient/ER-restricted predicate.
 
-**#6 — at-risk over-inclusion.** ATLAS admits a CS4 ("ten closest embeddings") entry only with
-corroboration: `(≥2 prior CS4) OR (≥1 CS4 AND a smoking observation)`. IHD (CS3) and differential
-(CS1) are admitted directly. ACES `has` is conjunctive within a window and there is no OR across
-count-thresholds, so this disjunction can't be one task. `risk_entry` = **union of CS1 ∪ CS3 ∪ CS4
-at ≥1 occurrence**, which admits lone-CS4-mention patients the benchmark would reject ⇒ the at-risk
-denominator is **slightly larger** (diluted prevalence). CS4 overlaps IHD/differential heavily, so
-the gap is modest. The exact rule would need 3–4 unioned task variants.
+**#6 — at-risk entry: CS4 dropped.** ATLAS enters the at-risk cohort on the *first* of `IHD (CS3)`,
+`differential (CS1)`, or `CS4 ("ten closest embeddings") WITH corroboration ((≥2 prior) OR (+smoking))`.
+ACES `has` is conjunctive and can't OR count-thresholds, so the corroboration is inexpressible.
+Admitting CS4 at ≥1 (the first attempt) was **catastrophic**: since
+`min(CS1,CS3,CS4_uncorroborated) ≤ min(CS1,CS3,CS4_corroborated)`, a single uncorroborated CS4 code
+opened the at-risk window a **median ~1.6 yr too early** (p90 7.7 yr; 58% of subjects >1 yr early),
+inflating prediction points **~13×** (70 vs 5 per subject) on CUMC — validated against the benchmark.
+So `risk_entry` is now **CS1 ∪ CS3 only** (differential + ischemic heart disease); CS4 is excluded.
+Trade-off: patients whose *only* at-risk qualifier is a corroborated CS4 (no IHD/differential ever)
+are missed — expected to be few, since CS4 overlaps IHD/differential heavily.
 
 **#9 — recent-activity gate loosened to `_ANY_EVENT`.** The SQL requires ≥1 `condition_occurrence`
 **or** `drug_exposure` in the prior 2yr. We use ACES's built-in `_ANY_EVENT` (any record) instead,
