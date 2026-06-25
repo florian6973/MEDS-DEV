@@ -84,6 +84,14 @@ def codes_at(meds: pl.DataFrame, subject: int, t, adm_regex: str, window_days: i
     return status, dd, rel["code"].to_list(), int(rel["_v"].sum())
 
 
+def nearest_point_days(df: pl.DataFrame, subject: int, t) -> float | None:
+    """Days to the nearest prediction point of ``subject`` in another cohort frame (None if absent)."""
+    o = df.filter(pl.col("subject_id") == subject)["prediction_time"]
+    if o.len() == 0:
+        return None
+    return float((o - t).dt.total_nanoseconds().abs().min() / 1e9 / 86400)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--meds", required=True, type=Path, help="dir of MEDS shards (e.g. .../data/held_out)")
@@ -130,6 +138,10 @@ def main() -> None:
             print(f"  |pred_time - nearest MEDS admission|: within 1d {100*(d<=1).mean():.1f}% | "
                   f"within 7d {100*(d<=7).mean():.1f}% | median {d.median():,.1f}d | max {d.max():,.1f}d")
 
+        # nearest point in the OTHER cohort(s) -> tells whether the other side triggered nearby
+        other = (pl.concat([c.select("subject_id", "prediction_time") for n, c in cohorts.items() if n != name])
+                 if len(cohorts) > 1 else None)
+
         # code-at-prediction-time (the key check, for THIS cohort)
         print(f"\n  CODES AT {name} PREDICTION TIMES (sample of {args.n}):")
         sample = shared.unique(subset=["subject_id", "prediction_time"]).sort(["subject_id", "prediction_time"]).head(args.n)
@@ -139,8 +151,12 @@ def main() -> None:
             vtag = f"visit={n_visit}" if codes else "visit=0"
             shown = (", ".join(codes[:5]) + (f"  (+{len(codes) - 5} more)" if len(codes) > 5 else "")
                      if codes else "(no events)")
+            other_tag = ""
+            if other is not None:
+                nd = nearest_point_days(other, r["subject_id"], r["prediction_time"])
+                other_tag = f" | nearest-other={'none' if nd is None else f'{nd:.1f}d'}"
             print(f"    subj {r['subject_id']} @ {r['prediction_time']} label={r['label']} "
-                  f"-> [{status}{delta}] {vtag} | {shown}")
+                  f"-> [{status}{delta}] {vtag} | {shown}{other_tag}")
         print()
 
 

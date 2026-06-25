@@ -233,13 +233,15 @@ DATASET_VISIT_PREDICATES = {
         ("inpatient_visit", "^HOSPITAL_ADMISSION//.*"),
     ],
     # CUMC OMOP-MEDS. The benchmark triggers on ALL visit_occurrence rows, so we override the
-    # task's `inpatient_or_er_visit` trigger to match every Visit/ code (IP/OP/ER/HE/...). The
-    # er_visit/inpatient_visit entries still resolve the task's ??? (they become unreferenced once
-    # the derived trigger is overridden).
+    # task's `inpatient_or_er_visit` trigger to match every visit. CUMC MEDS encodes visits under
+    # TWO prefixes -- `Visit/IP|OP|ER|HE|...` AND `CMS Place of Service/NN` (telehealth 02, office
+    # 11, inpatient 21, ER 23, ...) -- which are *separate* visits (~1% co-occur), so the trigger
+    # must match both or it misses every CMS-POS-coded visit. The er_visit/inpatient_visit entries
+    # still resolve the task's ??? (they become unreferenced once the derived trigger is overridden).
     "cumc": [
-        ("er_visit", "(?i)^visit/er"),
-        ("inpatient_visit", "(?i)^visit/ip"),
-        ("inpatient_or_er_visit", "(?i)^visit/"),
+        ("er_visit", "(?i)^(visit/er|cms place of service/23)"),
+        ("inpatient_visit", "(?i)^(visit/ip|cms place of service/21)"),
+        ("inpatient_or_er_visit", "(?i)^(visit/|cms place of service/)"),
     ],
 }
 
