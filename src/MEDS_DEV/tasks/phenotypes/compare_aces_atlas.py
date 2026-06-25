@@ -85,28 +85,42 @@ def collect_parquets(paths: list[Path]) -> list[Path]:
     return files
 
 
-def load_normalized(paths: list[Path], side: str) -> pl.DataFrame:
-    """Load + concat parquets and rename to canonical columns (subject_id/prediction_time/boolean_value)."""
-    files = collect_parquets(paths)
-    df = pl.concat([pl.read_parquet(f) for f in files], how="vertical_relaxed")
+def normalize_one(df: pl.DataFrame) -> pl.DataFrame | None:
+    """Reduce one parquet to the 3 canonical columns, or None if any is missing.
+
+    ACES writes only a ``subject_id`` column for empty shards (no prediction points); those are
+    returned as None and skipped, keeping schemas consistent for concat.
+    """
     rename = {}
     for canonical, candidates in COL_ALIASES.items():
         found = next((c for c in candidates if c in df.columns), None)
         if found is None:
-            raise SystemExit(
-                f"[{side}] could not find a '{canonical}' column. "
-                f"Looked for {candidates}; have {df.columns}"
-            )
+            return None
         rename[found] = canonical
-    df = df.rename(rename).select(["subject_id", "prediction_time", "boolean_value"])
-    # normalize dtypes for joining
-    df = df.with_columns(
+    return df.rename(rename).select(
         pl.col("subject_id").cast(pl.Int64, strict=False),
         pl.col("prediction_time").cast(pl.Datetime("ns"), strict=False),
         pl.col("boolean_value").cast(pl.Boolean, strict=False),
     )
-    print(f"[{side}] {len(files)} file(s), {df.height:,} rows, "
-          f"columns mapped {rename}")
+
+
+def load_normalized(paths: list[Path], side: str) -> pl.DataFrame:
+    """Load parquets, normalize each to canonical columns, concat; skip empty/incompatible shards."""
+    files = collect_parquets(paths)
+    frames, skipped = [], 0
+    for f in files:
+        norm = normalize_one(pl.read_parquet(f))
+        if norm is None:
+            skipped += 1
+        else:
+            frames.append(norm)
+    if not frames:
+        raise SystemExit(
+            f"[{side}] no file had subject_id/prediction_time/boolean_value columns "
+            f"(checked {len(files)} file(s))"
+        )
+    df = pl.concat(frames, how="vertical_relaxed")
+    print(f"[{side}] {len(files)} file(s) ({skipped} empty/skipped), {df.height:,} rows")
     return df
 
 
