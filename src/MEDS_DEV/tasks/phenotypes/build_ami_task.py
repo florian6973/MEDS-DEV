@@ -74,12 +74,28 @@ def to_mimic_meds(code: str) -> str | None:
     return None
 
 
+def to_cumc_meds(code: str) -> str:
+    """Translate an ATLAS ``VOCAB//CODE`` to the CUMC OMOP-MEDS code (single-slash, dots kept).
+
+    CUMC MEDS writes ``VOCAB/CODE`` (e.g. ATLAS ``ICD10CM//I21.29`` -> ``ICD10CM/I21.29``,
+    ``SNOMED//22298006`` -> ``SNOMED/22298006``). All vocabularies are kept (CUMC has SNOMED).
+
+    >>> to_cumc_meds("ICD10CM//I21.29")
+    'ICD10CM/I21.29'
+    >>> to_cumc_meds("SNOMED//22298006")
+    'SNOMED/22298006'
+    """
+    return code.replace("//", "/", 1)
+
+
 def transform(codes: list[str], fmt: str) -> list[str]:
     """Apply a dataset code-format transform; ``atlas`` is identity."""
     if fmt == "atlas":
         return codes
     if fmt == "mimic":
         return sorted({c for c in (to_mimic_meds(x) for x in codes) if c})
+    if fmt == "cumc":
+        return sorted({to_cumc_meds(x) for x in codes})
     raise ValueError(f"unknown format: {fmt}")
 
 
@@ -216,6 +232,15 @@ DATASET_VISIT_PREDICATES = {
         ("er_visit", "^ED_REGISTRATION//.*"),
         ("inpatient_visit", "^HOSPITAL_ADMISSION//.*"),
     ],
+    # CUMC OMOP-MEDS. The benchmark triggers on ALL visit_occurrence rows, so we override the
+    # task's `inpatient_or_er_visit` trigger to match every Visit/ code (IP/OP/ER/HE/...). The
+    # er_visit/inpatient_visit entries still resolve the task's ??? (they become unreferenced once
+    # the derived trigger is overridden).
+    "cumc": [
+        ("er_visit", "(?i)^visit/er"),
+        ("inpatient_visit", "(?i)^visit/ip"),
+        ("inpatient_or_er_visit", "(?i)^visit/"),
+    ],
 }
 
 
@@ -257,9 +282,10 @@ def main() -> None:
     p.add_argument("--emit", choices=["task", "dataset-predicates"], default="task",
                    help="'task' = full ami.yaml; 'dataset-predicates' = just ami/risk_entry for a "
                         "dataset predicates.yaml override")
-    p.add_argument("--format", choices=["atlas", "mimic"], default="atlas",
+    p.add_argument("--format", choices=["atlas", "mimic", "cumc"], default="atlas",
                    help="code format. 'atlas' = VOCAB//CODE (task default); 'mimic' = "
-                        "DIAGNOSIS//ICD//{9,10}//<no-dots>, ICD-only")
+                        "DIAGNOSIS//ICD//{9,10}//<no-dots>, ICD-only; 'cumc' = VOCAB/CODE "
+                        "(single slash, all vocabs incl SNOMED), trigger = all Visit/ codes")
     args = p.parse_args()
 
     ami_codes = transform(resolve_codes(args.case_zip, {3}), args.format)
