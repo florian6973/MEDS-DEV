@@ -61,7 +61,11 @@ def included_concept_ids(zip_path: str, cs_id: int) -> list[int]:
 
 def load(omop: str, table: str, cols: list[str], subjects: list[int]) -> pl.DataFrame:
     """Scan an OMOP table, keep only the requested subjects + available columns."""
-    fs = glob.glob(os.path.join(omop, table, "*.parquet"))
+    fs = glob.glob(os.path.join(omop, table, "**", "*.parquet"), recursive=True)
+    fs = [f for f in fs if not os.path.basename(f).startswith(".")]  # skip hidden .crc files
+    if not fs:
+        raise SystemExit(f"[load] no parquet files under {os.path.join(omop, table)!r} "
+                         f"(searched recursively). Check the table directory name/path.")
     lf = pl.scan_parquet(fs).filter(pl.col("person_id").cast(pl.Int64, strict=False).is_in(subjects))
     have = lf.collect_schema().names()
     keep = ["person_id"] + [c for c in cols if c in have]
