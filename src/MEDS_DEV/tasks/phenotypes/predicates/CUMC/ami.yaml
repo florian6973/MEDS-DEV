@@ -7,9 +7,9 @@ predicates:
   inpatient_visit:
     code: { regex: "(?i)^(visit/ip|cms place of service/51)" }
   inpatient_or_er_visit:
-    code: { regex: "(?i)^(visit/|cms place of service/)" }
+    code: { regex: "(?i)^(visit/|nucc/|domain/|cms place of service/(02|20|24|51|61))" }
   clinical_event:
-    code: { regex: "(?i)^(icd10cm/|icd9cm/|snomed/|rxnorm|ndc/|visit/|cms place of service/)" }
+    code: { regex: "(?i)^(icd10cm/|icd9cm/|snomed/|rxnorm|ndc/|visit/|nucc/|domain/|cms place of service/(02|20|24|51|61))" }
   ami_icd:
     code: { regex: "^(ICD10CM/I21|ICD10CM/I22|ICD10CM/I23|ICD9CM/410)" }
   ami_other:

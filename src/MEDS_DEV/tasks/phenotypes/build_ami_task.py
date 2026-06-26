@@ -283,16 +283,22 @@ DATASET_VISIT_PREDICATES = {
     "cumc": [
         ("er_visit", "(?i)^visit/er"),
         ("inpatient_visit", "(?i)^(visit/ip|cms place of service/51)"),
-        # benchmark triggers on ALL visit_occurrence rows (reproduce_benchmark.py ~L239), so the
-        # trigger override matches every Visit/ and CMS Place of Service/ code (incl. outpatient).
-        ("inpatient_or_er_visit", "(?i)^(visit/|cms place of service/)"),
+        # benchmark triggers on ALL visit_occurrence rows (reproduce_benchmark.py ~L239). The OMOP->MEDS
+        # ETL scatters visit_occurrence across vocabularies by visit_concept_id AND separately promotes
+        # the place-of-service ATTRIBUTE of non-visit records (drugs/labs at home etc.) into pseudo
+        # `CMS Place of Service/` events -- so "all visits" is a WHITELIST, not a prefix. Verified vs
+        # OMOP visit_occurrence (6,152,631): Visit/ = the Visit-vocab visits exactly (5,625,545);
+        # the rest are CMS-POS *visit types* (02 telehealth, 24 ASC, 51 IP-psych, 61 IP-rehab, 20 urgent),
+        # NUCC ambulatory clinics, and Domain/ (visit_concept_id=0). `/12` Home etc. are place-of-service
+        # tags (1.8M), never visit_concept_id -> excluded.
+        ("inpatient_or_er_visit", "(?i)^(visit/|nucc/|domain/|cms place of service/(02|20|24|51|61))"),
         # Depth-gate (#10) anchor = MEDS proxy for observation_period start. CRITICAL: obs_start is
         # ~the first CONDITION/DRUG/VISIT, NOT the first record of any kind -- LOINC labs (and
         # procedures) predate obs_start, so including them makes the "first clinical event" land far
         # too early and the >=2yr-history gate far too loose (+33k subjects vs the benchmark). So this
         # is restricted to condition (ICD/SNOMED) + drug (RxNorm/NDC) + visit vocabularies, which
         # reproduces obs_start depth to ~1% (first_event 72.6k vs obs_start 73.5k). Do NOT add LOINC.
-        ("clinical_event", "(?i)^(icd10cm/|icd9cm/|snomed/|rxnorm|ndc/|visit/|cms place of service/)"),
+        ("clinical_event", "(?i)^(icd10cm/|icd9cm/|snomed/|rxnorm|ndc/|visit/|nucc/|domain/|cms place of service/(02|20|24|51|61))"),
     ],
 }
 
