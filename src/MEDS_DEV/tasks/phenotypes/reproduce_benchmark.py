@@ -137,6 +137,10 @@ def main() -> None:
                     help="depth-gate reference: obs_start (observation_period start = the benchmark); "
                          "first_visit (min visit date); first_event (min condition/drug/visit date = "
                          "first CLINICAL event, excludes birth -- the closest MEDS-expressible proxy)")
+    ap.add_argument("--case-mode", choices=["encounter", "any_ami"], default="encounter",
+                    help="outcome definition: encounter (AMI during an inpatient/ER visit + ERA-collapse "
+                         "= the benchmark, #2); any_ami (any AMI code, no encounter/ERA = ACES-like). "
+                         "Run both on identical points to isolate the #2/ERA share of label disagreement.")
     args = ap.parse_args()
 
     atlas = pl.read_parquet(args.atlas)
@@ -238,14 +242,19 @@ def main() -> None:
     # ---- case cohort: Acute-MI(CS3) during an inpatient/ER visit(CS2), ERA collapse 180+7 ----
     # "during" = the AMI's DATE falls inside the CS2 visit's [start_date, end_date] interval (ATLAS's
     # AdditionalCriteria, at date granularity -- see note above on lost condition times).
-    vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
-    amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
-              .join(vip, on="person_id", how="inner")
-              .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
-              .select("person_id", pl.col("ami_d").alias("case_d")).unique())
-    # cohort interval [AMI, AMI+7] padded 180 -> merge if gap <= 187
-    cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
-    print(f"case subjects: {cases['person_id'].n_unique() if cases.height else 0:,}")
+    if args.case_mode == "any_ami":
+        # ACES-like outcome: every AMI(CS3) code is a "case", no encounter restriction, no ERA collapse.
+        cases = (cond.filter(pl.col("condition_concept_id").is_in(AMI))
+                 .select("person_id", pl.col("cd").alias("case_start")).unique())
+    else:
+        vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
+        amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
+                  .join(vip, on="person_id", how="inner")
+                  .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
+                  .select("person_id", pl.col("ami_d").alias("case_d")).unique())
+        # cohort interval [AMI, AMI+7] padded 180 -> merge if gap <= 187
+        cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
+    print(f"case subjects ({args.case_mode}): {cases['person_id'].n_unique() if cases.height else 0:,}")
 
     # ---- visit windowing + labels ----
     fv = visit.group_by("person_id").agg(pl.col("vd").min().alias("fv"))  # first-visit proxy for obs-start
