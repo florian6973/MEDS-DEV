@@ -111,16 +111,20 @@ def main() -> None:
     direct = list(set(IHD) | set(DIFF))
     print(f"concept ids: IHD {len(IHD)} | DIFF {len(DIFF)} | EMB {len(EMB)} | AMI {len(AMI)} | VISIT {len(VISIT_IPER)}")
 
+    def dt(col):  # parse an OMOP date/datetime string to Datetime, keeping sub-second precision
+        return pl.col(col).cast(pl.Utf8).str.to_datetime(strict=False)
     cond = load(args.omop, "condition_occurrence",
-                ["condition_concept_id", "condition_start_date"], subjects)
-    cond = cond.with_columns(pl.col("condition_concept_id").cast(pl.Int64), d("condition_start_date").alias("cd"))
+                ["condition_concept_id", "condition_start_date", "condition_start_datetime"], subjects)
+    cdtcol = "condition_start_datetime" if "condition_start_datetime" in cond.columns else "condition_start_date"
+    cond = cond.with_columns(pl.col("condition_concept_id").cast(pl.Int64), d("condition_start_date").alias("cd"),
+                             dt(cdtcol).alias("cdt"))
     visit = load(args.omop, "visit_occurrence",
-                 ["visit_concept_id", "visit_start_date", "visit_end_date", "visit_start_datetime"], subjects)
+                 ["visit_concept_id", "visit_start_date", "visit_start_datetime", "visit_end_datetime", "visit_end_date"], subjects)
     dtcol = "visit_start_datetime" if "visit_start_datetime" in visit.columns else "visit_start_date"
-    vend = "visit_end_date" if "visit_end_date" in visit.columns else "visit_start_date"
+    vendcol = "visit_end_datetime" if "visit_end_datetime" in visit.columns else "visit_end_date"
     visit = visit.with_columns(
-        pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"), d(vend).alias("ved"),
-        pl.col(dtcol).cast(pl.Utf8).str.to_datetime(strict=False).alias("vt"))  # keep sub-second precision
+        pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"),
+        dt(dtcol).alias("vt"), dt(vendcol).alias("vet"))
     drug = load(args.omop, "drug_exposure", ["drug_exposure_start_date"], subjects).with_columns(
         d("drug_exposure_start_date").alias("cd"))
     op = load(args.omop, "observation_period",
@@ -158,11 +162,13 @@ def main() -> None:
     print(f"at-risk subjects: {entry.height:,}")
 
     # ---- case cohort: Acute-MI(CS3) during an inpatient/ER visit(CS2), ERA collapse 180+7 ----
-    vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
-    amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
+    # "during" = the AMI's datetime falls inside the CS2 visit's [start, end] datetime interval
+    # (exactly as the ATLAS AdditionalCriteria); the case_start used for labels is the AMI DATE.
+    vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vt", "vet")
+    amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", "cd", pl.col("cdt").alias("ami_dt"))
               .join(vip, on="person_id", how="inner")
-              .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
-              .select("person_id", pl.col("ami_d").alias("case_d")).unique())
+              .filter((pl.col("vt") <= pl.col("ami_dt")) & (pl.col("ami_dt") <= pl.col("vet")))
+              .select("person_id", pl.col("cd").alias("case_d")).unique())
     # cohort interval [AMI, AMI+7] padded 180 -> merge if gap <= 187
     cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
     print(f"case subjects: {cases['person_id'].n_unique() if cases.height else 0:,}")
@@ -176,11 +182,14 @@ def main() -> None:
     V = V.sort(["person_id", "vd"]).join_asof(cd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd",
                                               by="person_id", strategy="backward")
     V = V.filter(((pl.col("vd") - pl.col("cdd")).dt.total_days() <= 365 * MIN_OBS_YEARS).fill_null(False))
-    # labels via case exclusion (one row per visit x case era; drop -1, then max)
+    # labels via case exclusion (one row per visit x case era; drop -1, then max). The SQL compares
+    # case_start_DATE to visit_start_DATETIME, so a same-day case (case_start midnight < visit time)
+    # excludes the visit -- we replicate that by casting case_start to a midnight datetime vs vt.
     V = V.join(cases, on="person_id", how="left").with_columns(
+        pl.col("case_start").cast(pl.Datetime("us")).alias("cs_dt")).with_columns(
         pl.when(pl.col("case_start").is_null()).then(0)
-        .when(pl.col("case_start") < pl.col("vd")).then(-1)
-        .when(pl.col("case_start") <= pl.col("vd") + pl.duration(days=365 * PREDICTION_YEARS)).then(1)
+        .when(pl.col("cs_dt") < pl.col("vt")).then(-1)
+        .when(pl.col("cs_dt") <= pl.col("vt") + pl.duration(days=365 * PREDICTION_YEARS)).then(1)
         .otherwise(0).alias("b"))
     out = (V.filter(pl.col("b") != -1).group_by(["person_id", "vd", "vt"]).agg(pl.col("b").max().alias("boolean_value"))
            .select(pl.col("person_id").alias("subject_id"), pl.col("vt").alias("prediction_time"), "boolean_value"))
