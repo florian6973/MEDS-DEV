@@ -202,14 +202,17 @@ def cohort_match(a, b) -> str:
 
 
 def cmp1(a, b) -> str:
-    """Compact one-line exact-(subject,second) comparison (A = the Python rung, B = ACES or ATLAS)."""
+    """Exact-(subject,second) comparison with the 2x2 label confusion matrix (A = Python rung, B = ACES/ATLAS)."""
     A, B = _norm(a), _norm(b)
     sa = set(A["subject_id"].unique().to_list()); sb = set(B["subject_id"].unique().to_list())
     j = A.join(B, on=["subject_id", "t"], how="inner", suffix="_b")
-    agree = j.filter(pl.col("y") == pl.col("y_b")).height
+    c = {(x, y): j.filter((pl.col("y") == x) & (pl.col("y_b") == y)).height for x in (1, 0) for y in (1, 0)}
+    agree = c[(1, 1)] + c[(0, 0)]
     return (f"subj shared {len(sa & sb):,} / onlyA {len(sa - sb):,} / onlyB {len(sb - sa):,} | "
             f"pts exact {j.height:,} / onlyA {A.height - j.height:,} / onlyB {B.height - j.height:,} | "
-            f"label-agree {100*agree/max(1,j.height):.3f}%")
+            f"agree {100*agree/max(1,j.height):.3f}%\n"
+            f"        confusion(exact pts, A1=Python-pos B1=other-pos): "
+            f"A1B1 {c[(1,1)]:,}  A1B0 {c[(1,0)]:,}  A0B1 {c[(0,1)]:,}  A0B0 {c[(0,0)]:,}")
 
 
 def load_cohort_file(path: str) -> pl.DataFrame:
