@@ -262,10 +262,11 @@ DATASET_VISIT_PREDICATES = {
     "mimic": [
         ("er_visit", "^ED_REGISTRATION//.*"),
         ("inpatient_visit", "^HOSPITAL_ADMISSION//.*"),
-        # Depth-gate (#10) clinical-event anchor. Best-effort MIMIC clinical prefixes (verify against a
-        # prefix dump of the MIMIC MEDS shards); excludes MEDS_BIRTH/MEDS_DEATH + demographic codes.
-        ("clinical_event", "^(DIAGNOSIS//|LAB//|MEDICATION//|PROCEDURE//|HOSPITAL_ADMISSION//|"
-                           "HOSPITAL_DISCHARGE//|ED_REGISTRATION//|ED_OUT//|ICU_ADMISSION//|ICU_DISCHARGE//)"),
+        # Depth-gate (#10) anchor = condition/drug/visit only (obs_start proxy); EXCLUDES LAB// and
+        # PROCEDURE// -- labs predate obs_start and make the >=2yr-history gate far too loose. Best-
+        # effort MIMIC prefixes (verify against a prefix dump of the MIMIC MEDS shards).
+        ("clinical_event", "^(DIAGNOSIS//|MEDICATION//|HOSPITAL_ADMISSION//|HOSPITAL_DISCHARGE//|"
+                           "ED_REGISTRATION//|ED_OUT//|ICU_ADMISSION//|ICU_DISCHARGE//)"),
     ],
     # CUMC OMOP-MEDS. The benchmark triggers on ALL visit_occurrence rows, so we override the
     # task's `inpatient_or_er_visit` trigger to match every visit. CUMC MEDS encodes visits under
@@ -285,13 +286,13 @@ DATASET_VISIT_PREDICATES = {
         # benchmark triggers on ALL visit_occurrence rows (reproduce_benchmark.py ~L239), so the
         # trigger override matches every Visit/ and CMS Place of Service/ code (incl. outpatient).
         ("inpatient_or_er_visit", "(?i)^(visit/|cms place of service/)"),
-        # Depth-gate (#10) clinical-event anchor = any NON-demographic event (MEDS proxy for
-        # observation_period start). Enumerated from the CUMC MEDS vocab prefixes; EXCLUDES the
-        # birth-dated demographics (Gender/Race/Ethnicity/MEDS_BIRTH), MEDS_DEATH, and Domain.
-        # Validated: "first clinical event" reproduces obs-start depth to within 1.3% (72.6k vs 73.5k).
-        ("clinical_event",
-         "(?i)^(loinc/|icd10cm/|icd9cm/|icd10pcs/|icd9proc/|cpt4/|hcpcs/|ndc/|rxnorm|cvx/|isbt/|"
-         "snomed/|pcornet/|visit/|cms place of service/|nucc/|medicare specialty/)"),
+        # Depth-gate (#10) anchor = MEDS proxy for observation_period start. CRITICAL: obs_start is
+        # ~the first CONDITION/DRUG/VISIT, NOT the first record of any kind -- LOINC labs (and
+        # procedures) predate obs_start, so including them makes the "first clinical event" land far
+        # too early and the >=2yr-history gate far too loose (+33k subjects vs the benchmark). So this
+        # is restricted to condition (ICD/SNOMED) + drug (RxNorm/NDC) + visit vocabularies, which
+        # reproduces obs_start depth to ~1% (first_event 72.6k vs obs_start 73.5k). Do NOT add LOINC.
+        ("clinical_event", "(?i)^(icd10cm/|icd9cm/|snomed/|rxnorm|ndc/|visit/|cms place of service/)"),
     ],
 }
 
@@ -344,10 +345,7 @@ def build_dataset_predicates(ami_codes: list[str], risk_codes: list[str], fmt: s
 predicates:
 {visit_block}
 {diag_predicate("ami", ami_codes, fmt)}
-  risk_entry:
-    code:
-      any:
-{code_block(risk_codes, indent="        ")}
+{diag_predicate("risk_entry", risk_codes, fmt)}
 """
 
 

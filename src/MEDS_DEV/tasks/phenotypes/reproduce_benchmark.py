@@ -201,6 +201,17 @@ def cohort_match(a, b) -> str:
             f"   label-agree on matched: {agree:,}/{m:,} ({100*agree/max(1,m):.3f}%)")
 
 
+def cmp1(a, b) -> str:
+    """Compact one-line exact-(subject,second) comparison (A = the Python rung, B = ACES or ATLAS)."""
+    A, B = _norm(a), _norm(b)
+    sa = set(A["subject_id"].unique().to_list()); sb = set(B["subject_id"].unique().to_list())
+    j = A.join(B, on=["subject_id", "t"], how="inner", suffix="_b")
+    agree = j.filter(pl.col("y") == pl.col("y_b")).height
+    return (f"subj shared {len(sa & sb):,} / onlyA {len(sa - sb):,} / onlyB {len(sb - sa):,} | "
+            f"pts exact {j.height:,} / onlyA {A.height - j.height:,} / onlyB {B.height - j.height:,} | "
+            f"label-agree {100*agree/max(1,j.height):.3f}%")
+
+
 def load_cohort_file(path: str) -> pl.DataFrame:
     files = ([f for f in glob.glob(os.path.join(path, "**", "*.parquet"), recursive=True) if ".logs" not in f]
              if os.path.isdir(path) else [path])
@@ -231,24 +242,24 @@ def run_ladder(cond, drug, visit, op, codes, atlas, aces) -> None:
     for name, override in steps:
         cfg = {**cfg, **override}
         rungs.append((name, dict(cfg)))
-    print("\n" + "=" * 86)
+    samp = atlas.select(pl.col("subject_id").cast(pl.Int64)).unique()
+    print("\n" + "=" * 92)
     print("VALIDATION LADDER  (ACES-expressible floor -> full benchmark; each rung adds one feature)")
-    print("=" * 86)
-    outs = []; prev = None
+    print("  every rung is exact-(subject,second) compared vs ACES (full tuning) and vs ATLAS (sample subjects)")
+    print("=" * 92)
+    prev = None
     for name, cfg in rungs:
         o = build_cohort(cond, drug, visit, op, codes, cfg)
         n = o["subject_id"].n_unique(); pts = o.height
-        outs.append(o)
         delta = "" if prev is None else f"{n - prev:>+8,} subj"
-        print(f"  {name:36s} {n:>8,} subj | {pts:>11,} pts  {delta}")
+        print(f"\n  {name:36s} {n:>8,} subj | {pts:>11,} pts  {delta}")
+        print(f"      vs ACES         : {cmp1(o, aces)}")
+        o_samp = o.with_columns(pl.col("subject_id").cast(pl.Int64)).join(samp, on="subject_id", how="inner")
+        print(f"      vs ATLAS-sample : {cmp1(o_samp, atlas)}")
         prev = n
-    print("-" * 86)
-    print("ANCHOR bottom  R0 (ACES-equivalent Python)  vs  ACES output  [expect ~perfect]:")
-    print("   " + cohort_match(outs[0], aces))
-    print("ANCHOR top     R6 (full benchmark Python)   vs  ATLAS sample (sample subjects only)  [expect 100%]:")
-    samp = atlas.select(pl.col("subject_id").cast(pl.Int64)).unique()
-    r5s = outs[-1].with_columns(pl.col("subject_id").cast(pl.Int64)).join(samp, on="subject_id", how="inner")
-    print("   " + cohort_match(r5s, atlas))
+    print("\n" + "-" * 92)
+    print("Read: R0 'vs ACES' = the ACES-fidelity floor (-> ~perfect when ACES has no extra approximations);")
+    print("      R6 'vs ATLAS-sample' = benchmark re-validation (-> 100%).")
 
 
 def main() -> None:
