@@ -116,12 +116,14 @@ def code_block(codes: list[str], indent: str = "      ") -> str:
 def build_yaml(ami_codes: list[str], risk_codes: list[str], obs_depth_gate: bool = False) -> str:
     lookback_days = LOOKBACK_YEARS * 365
     horizon_days = PREDICTION_YEARS * 365
-    # Observation-period DEPTH gate (#10, lower bound only). Benchmark requires the visit to be
-    # >= LOOKBACK_YEARS after the earliest observation-period start (>= that much record depth). MEDS
-    # has no observation_period, so obs-start is proxied by the first event of any kind: requiring
-    # >=1 event at/before trigger-lookback means the record began >= LOOKBACK_YEARS before the visit.
-    # The benchmark's UPPER bound (visit < end of the obs period CONTAINING entry) needs obs-period
-    # gap structure MEDS lacks, so it stays irreducible (#10). Toggle with --obs-depth-gate.
+    # Observation-period DEPTH gate (#10, lower bound only). The benchmark SQL requires
+    # `visit >= observation_period_start_date + 2yr` (cohort_pos_neg_query.sql L16). MEDS has no
+    # observation_period table, so obs-start is proxied by the first NON-demographic event: requiring
+    # >=1 `clinical_event` at/before trigger-lookback means the clinical record began >= LOOKBACK_YEARS
+    # before the visit. NB: a plain _ANY_EVENT proxy is a NO-OP because MEDS stamps demographics
+    # (Gender/Race/Ethnicity/MEDS_BIRTH) at the birth date, decades before any visit. The benchmark's
+    # UPPER bound (visit < end of the obs period CONTAINING entry, L15) needs obs-period gap structure
+    # MEDS lacks, so it stays irreducible (#10). Toggle with --obs-depth-gate.
     obs_depth_window = (
         f"""\
   sufficient_history:
@@ -130,8 +132,15 @@ def build_yaml(ami_codes: list[str], risk_codes: list[str], obs_depth_gate: bool
     start_inclusive: True
     end_inclusive: True
     has:
-      _ANY_EVENT: (1, None)
+      clinical_event: (1, None)
 """
+        if obs_depth_gate else ""
+    )
+    clinical_event_decl = (
+        "  # Depth-gate (#10) anchor: any NON-demographic ('clinical') event, the MEDS proxy for\n"
+        "  # observation_period start. MEDS stamps Gender/Race/Ethnicity/MEDS_BIRTH at the birth date,\n"
+        "  # so _ANY_EVENT can't proxy obs-start; each dataset enumerates its clinical vocab prefixes.\n"
+        "  clinical_event: ???\n\n"
         if obs_depth_gate else ""
     )
     return f"""\
@@ -226,7 +235,7 @@ predicates:
   inpatient_or_er_visit:
     expr: or(er_visit, inpatient_visit)
 
-  # --- outcome predicate (AMI Case, concept set 3) ---
+{clinical_event_decl}  # --- outcome predicate (AMI Case, concept set 3) ---
   # NOTE (#2): the ATLAS case requires this AMI to occur DURING an inpatient/ER encounter.
   # ACES cannot bind the future AMI to an encounter interval, so this defaults to the raw
   # Acute-MI concept set. On hospital-only datasets (e.g. MIMIC-IV) that is already ~inpatient;
@@ -253,6 +262,10 @@ DATASET_VISIT_PREDICATES = {
     "mimic": [
         ("er_visit", "^ED_REGISTRATION//.*"),
         ("inpatient_visit", "^HOSPITAL_ADMISSION//.*"),
+        # Depth-gate (#10) clinical-event anchor. Best-effort MIMIC clinical prefixes (verify against a
+        # prefix dump of the MIMIC MEDS shards); excludes MEDS_BIRTH/MEDS_DEATH + demographic codes.
+        ("clinical_event", "^(DIAGNOSIS//|LAB//|MEDICATION//|PROCEDURE//|HOSPITAL_ADMISSION//|"
+                           "HOSPITAL_DISCHARGE//|ED_REGISTRATION//|ED_OUT//|ICU_ADMISSION//|ICU_DISCHARGE//)"),
     ],
     # CUMC OMOP-MEDS. The benchmark triggers on ALL visit_occurrence rows, so we override the
     # task's `inpatient_or_er_visit` trigger to match every visit. CUMC MEDS encodes visits under
@@ -272,6 +285,13 @@ DATASET_VISIT_PREDICATES = {
         # benchmark triggers on ALL visit_occurrence rows (reproduce_benchmark.py ~L239), so the
         # trigger override matches every Visit/ and CMS Place of Service/ code (incl. outpatient).
         ("inpatient_or_er_visit", "(?i)^(visit/|cms place of service/)"),
+        # Depth-gate (#10) clinical-event anchor = any NON-demographic event (MEDS proxy for
+        # observation_period start). Enumerated from the CUMC MEDS vocab prefixes; EXCLUDES the
+        # birth-dated demographics (Gender/Race/Ethnicity/MEDS_BIRTH), MEDS_DEATH, and Domain.
+        # Validated: "first clinical event" reproduces obs-start depth to within 1.3% (72.6k vs 73.5k).
+        ("clinical_event",
+         "(?i)^(loinc/|icd10cm/|icd9cm/|icd10pcs/|icd9proc/|cpt4/|hcpcs/|ndc/|rxnorm|cvx/|isbt/|"
+         "snomed/|pcornet/|visit/|cms place of service/|nucc/|medicare specialty/)"),
     ],
 }
 

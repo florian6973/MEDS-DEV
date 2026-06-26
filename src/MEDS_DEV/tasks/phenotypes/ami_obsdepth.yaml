@@ -67,7 +67,7 @@ windows:
     start_inclusive: True
     end_inclusive: True
     has:
-      _ANY_EVENT: (1, None)
+      clinical_event: (1, None)
   # Outcome: first AMI within the 1-year horizon -> positive label.
   target:
     start: trigger
@@ -95,6 +95,11 @@ predicates:
   inpatient_visit: ???    # an inpatient (hospital) visit start
   inpatient_or_er_visit:
     expr: or(er_visit, inpatient_visit)
+
+  # Depth-gate (#10) anchor: any NON-demographic ('clinical') event, the MEDS proxy for
+  # observation_period start. MEDS stamps Gender/Race/Ethnicity/MEDS_BIRTH at the birth date,
+  # so _ANY_EVENT can't proxy obs-start; each dataset enumerates its clinical vocab prefixes.
+  clinical_event: ???
 
   # --- outcome predicate (AMI Case, concept set 3) ---
   # NOTE (#2): the ATLAS case requires this AMI to occur DURING an inpatient/ER encounter.

@@ -6,6 +6,8 @@ predicates:
     code: { regex: "^ED_REGISTRATION//.*" }
   inpatient_visit:
     code: { regex: "^HOSPITAL_ADMISSION//.*" }
+  clinical_event:
+    code: { regex: "^(DIAGNOSIS//|LAB//|MEDICATION//|PROCEDURE//|HOSPITAL_ADMISSION//|HOSPITAL_DISCHARGE//|ED_REGISTRATION//|ED_OUT//|ICU_ADMISSION//|ICU_DISCHARGE//)" }
   ami:
     code:
       any:
