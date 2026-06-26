@@ -133,9 +133,10 @@ def main() -> None:
                     help="drop the #10 upper bound (vd < end of obs period containing entry)")
     ap.add_argument("--no-recent-gate", action="store_true",
                     help="drop the #9 recent condition/drug requirement (ACES uses looser _ANY_EVENT)")
-    ap.add_argument("--depth-anchor", choices=["obs_start", "first_visit"], default="obs_start",
-                    help="depth-gate reference: obs_start (observation_period start = the benchmark) "
-                         "or first_visit (min visit date = the MEDS-expressible proxy ACES can use)")
+    ap.add_argument("--depth-anchor", choices=["obs_start", "first_visit", "first_event"], default="obs_start",
+                    help="depth-gate reference: obs_start (observation_period start = the benchmark); "
+                         "first_visit (min visit date); first_event (min condition/drug/visit date = "
+                         "first CLINICAL event, excludes birth -- the closest MEDS-expressible proxy)")
     args = ap.parse_args()
 
     atlas = pl.read_parquet(args.atlas)
@@ -248,12 +249,15 @@ def main() -> None:
 
     # ---- visit windowing + labels ----
     fv = visit.group_by("person_id").agg(pl.col("vd").min().alias("fv"))  # first-visit proxy for obs-start
-    Vsrc = visit.join(entry, on="person_id", how="inner").join(fv, on="person_id", how="left")
+    fe = (pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd"),
+                     visit.select("person_id", pl.col("vd").alias("cd"))])
+          .drop_nulls().group_by("person_id").agg(pl.col("cd").min().alias("fe")))  # first clinical event (no birth)
+    Vsrc = visit.join(entry, on="person_id", how="inner").join(fv, on="person_id", how="left").join(fe, on="person_id", how="left")
     vfilt = pl.col("vd") >= pl.col("entry")
     if not args.no_cohort_end:
         vfilt = vfilt & (pl.col("vd") < pl.col("cohort_end"))
     if not args.no_depth_gate:
-        anchor = pl.col("fv") if args.depth_anchor == "first_visit" else pl.col("ostart_min")
+        anchor = {"first_visit": pl.col("fv"), "first_event": pl.col("fe")}.get(args.depth_anchor, pl.col("ostart_min"))
         vfilt = vfilt & (pl.col("vd") >= anchor + pl.duration(days=365 * MIN_OBS_YEARS))
     V = Vsrc.filter(vfilt).select("person_id", "vd", "vt").unique()
     if not args.no_recent_gate:
