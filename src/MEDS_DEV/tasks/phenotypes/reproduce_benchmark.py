@@ -53,10 +53,34 @@ SMOKING_CONCEPTS = [42709996, 762499, 4298794, 4310250, 37395605, 762498, 418463
 
 
 def included_concept_ids(zip_path: str, cs_id: int) -> list[int]:
-    """Standard concept ids of a concept set (post-resolution) from includedConcepts.csv."""
+    """Standard concept ids of a concept set (frozen snapshot) from includedConcepts.csv."""
     with zipfile.ZipFile(zip_path) as z:
         rows = csv.DictReader(io.StringIO(z.read("includedConcepts.csv").decode("utf-8-sig")))
         return [int(r["Concept ID"]) for r in rows if int(r["Concept Set ID"]) == cs_id]
+
+
+def seed_specs(zip_path: str, cs_id: int) -> list[tuple[int, bool]]:
+    """(concept_id, is_excluded) seeds of a concept set, from conceptSetExpression.csv."""
+    with zipfile.ZipFile(zip_path) as z:
+        rows = csv.DictReader(io.StringIO(z.read("conceptSetExpression.csv").decode("utf-8-sig")))
+        return [(int(r["Concept ID"]), r["Exclude"].strip().lower() == "true")
+                for r in rows if int(r["Concept Set ID"]) == cs_id]
+
+
+def load_concept_ancestor(omop: str):
+    """Lazy concept_ancestor (parquet dir or *concept_ancestor*.csv) with columns anc/desc; None if absent."""
+    pq = [f for f in glob.glob(os.path.join(omop, "concept_ancestor", "**", "*.parquet"), recursive=True)
+          if not os.path.basename(f).startswith(".")]
+    if pq:
+        lf = pl.scan_parquet(pq)
+    else:
+        csvs = [f for f in glob.glob(os.path.join(omop, "*.csv")) if "concept_ancestor" in os.path.basename(f).lower()]
+        if not csvs:
+            return None
+        lf = pl.scan_csv(csvs[0], infer_schema_length=0)
+    cols = {c.lower(): c for c in lf.collect_schema().names()}
+    return lf.select(pl.col(cols["ancestor_concept_id"]).cast(pl.Int64, strict=False).alias("anc"),
+                     pl.col(cols["descendant_concept_id"]).cast(pl.Int64, strict=False).alias("desc"))
 
 
 def load(omop: str, table: str, cols: list[str], subjects: list[int]) -> pl.DataFrame:
@@ -102,12 +126,31 @@ def main() -> None:
     subjects = atlas["subject_id"].cast(pl.Int64).unique().to_list()
     print(f"subjects (from ATLAS): {len(subjects):,}")
 
-    IHD = included_concept_ids(args.risk_zip, 3)
-    DIFF = included_concept_ids(args.risk_zip, 1)
-    EMB = included_concept_ids(args.risk_zip, 4)
-    ACUTE_YL = included_concept_ids(args.risk_zip, 0)   # no-AMI-7d set
-    AMI = included_concept_ids(args.case_zip, 3)        # case Acute MI
-    VISIT_IPER = included_concept_ids(args.case_zip, 2)  # inpatient/ER visit concepts
+    # Concept ids: re-resolve seed + descendants via the dataset's OWN concept_ancestor. The zip's
+    # includedConcepts is a frozen snapshot that lags the live vocabulary (verified: it missed the
+    # at-risk entry concept for the residual subjects). Fall back to the snapshot if no concept_ancestor.
+    specs = {"IHD": (args.risk_zip, 3), "DIFF": (args.risk_zip, 1), "EMB": (args.risk_zip, 4),
+             "ACUTE": (args.risk_zip, 0), "AMI": (args.case_zip, 3), "VISIT": (args.case_zip, 2)}
+    ca = load_concept_ancestor(args.omop)
+    if ca is not None:
+        seedmap = {k: seed_specs(*v) for k, v in specs.items()}
+        all_seeds = list({c for s in seedmap.values() for c, _ in s})
+        g = ca.filter(pl.col("anc").is_in(all_seeds)).group_by("anc").agg(pl.col("desc")).collect()
+        desc_by = {a: set(ds) for a, ds in zip(g["anc"].to_list(), g["desc"].to_list())}
+
+        def resolve(k):
+            inc = {c for c, ex in seedmap[k] if not ex}
+            exc = {c for c, ex in seedmap[k] if ex}
+            expand = lambda ids: set(ids) | {d for i in ids for d in desc_by.get(i, set())}
+            return list(expand(inc) - expand(exc))
+
+        IHD, DIFF, EMB, ACUTE_YL, AMI, VISIT_IPER = (resolve(k) for k in ("IHD", "DIFF", "EMB", "ACUTE", "AMI", "VISIT"))
+        print("concept sets re-resolved from seeds via concept_ancestor")
+    else:
+        IHD = included_concept_ids(args.risk_zip, 3); DIFF = included_concept_ids(args.risk_zip, 1)
+        EMB = included_concept_ids(args.risk_zip, 4); ACUTE_YL = included_concept_ids(args.risk_zip, 0)
+        AMI = included_concept_ids(args.case_zip, 3); VISIT_IPER = included_concept_ids(args.case_zip, 2)
+        print("concept sets from zip includedConcepts snapshot (no concept_ancestor found)")
     direct = list(set(IHD) | set(DIFF))
     print(f"concept ids: IHD {len(IHD)} | DIFF {len(DIFF)} | EMB {len(EMB)} | AMI {len(AMI)} | VISIT {len(VISIT_IPER)}")
 
