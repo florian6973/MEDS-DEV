@@ -116,7 +116,7 @@ def main() -> None:
     vend = "visit_end_date" if "visit_end_date" in visit.columns else "visit_start_date"
     visit = visit.with_columns(
         pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"), d(vend).alias("ved"),
-        pl.col(dtcol).cast(pl.Utf8).str.slice(0, 19).str.to_datetime(strict=False).alias("vt"))
+        pl.col(dtcol).cast(pl.Utf8).str.to_datetime(strict=False).alias("vt"))  # keep sub-second precision
     drug = load(args.omop, "drug_exposure", ["drug_exposure_start_date"], subjects).with_columns(
         d("drug_exposure_start_date").alias("cd"))
     op = load(args.omop, "observation_period",
