@@ -351,14 +351,7 @@ def build_dataset_predicates(ami_codes: list[str], risk_codes: list[str], fmt: s
 predicates:
 {visit_block}
 {diag_predicate("ami", ami_codes, fmt)}
-  # risk_entry = EXACT resolved codes (matches the benchmark's condition_concept_id set). We do NOT
-  # use the ICD-family regex here: rooting broad eligibility families (I20/R07/...) admits codes whose
-  # standard concept isn't in the resolved set -> ACES over-enters ~40k subjects vs the Python floor.
-  # The vocab-skew children the regex would recover are negligible for at-risk status (unlike `ami`).
-  risk_entry:
-    code:
-      any:
-{code_block(risk_codes, indent="        ")}
+{diag_predicate("risk_entry", risk_codes, fmt)}
 """
 
 
