@@ -125,6 +125,14 @@ def main() -> None:
     ap.add_argument("--case-zip", required=True)
     ap.add_argument("--risk-zip", required=True)
     ap.add_argument("--output", required=True, help="reproduced cohort parquet")
+    # gate toggles -- knock out one benchmark visit-gate at a time to measure its share of the
+    # ACES-vs-benchmark gap (run each, watch subject/point count climb toward the ACES cohort).
+    ap.add_argument("--no-depth-gate", action="store_true",
+                    help="drop the #10 lower bound (vd >= earliest obs_start + 2yr)")
+    ap.add_argument("--no-cohort-end", action="store_true",
+                    help="drop the #10 upper bound (vd < end of obs period containing entry)")
+    ap.add_argument("--no-recent-gate", action="store_true",
+                    help="drop the #9 recent condition/drug requirement (ACES uses looser _ANY_EVENT)")
     args = ap.parse_args()
 
     atlas = pl.read_parquet(args.atlas)
@@ -236,14 +244,21 @@ def main() -> None:
     print(f"case subjects: {cases['person_id'].n_unique() if cases.height else 0:,}")
 
     # ---- visit windowing + labels ----
-    V = (visit.join(entry, on="person_id", how="inner")
-         .filter((pl.col("vd") >= pl.col("entry")) & (pl.col("vd") < pl.col("cohort_end"))
-                 & (pl.col("vd") >= pl.col("ostart_min") + pl.duration(days=365 * MIN_OBS_YEARS)))
+    vfilt = pl.col("vd") >= pl.col("entry")
+    if not args.no_cohort_end:
+        vfilt = vfilt & (pl.col("vd") < pl.col("cohort_end"))
+    if not args.no_depth_gate:
+        vfilt = vfilt & (pl.col("vd") >= pl.col("ostart_min") + pl.duration(days=365 * MIN_OBS_YEARS))
+    V = (visit.join(entry, on="person_id", how="inner").filter(vfilt)
          .select("person_id", "vd", "vt").unique())
-    cd = pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd")]).drop_nulls().sort(["person_id", "cd"])
-    V = V.sort(["person_id", "vd"]).join_asof(cd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd",
-                                              by="person_id", strategy="backward")
-    V = V.filter(((pl.col("vd") - pl.col("cdd")).dt.total_days() <= 365 * MIN_OBS_YEARS).fill_null(False))
+    if not args.no_recent_gate:
+        cd = pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd")]).drop_nulls().sort(["person_id", "cd"])
+        V = V.sort(["person_id", "vd"]).join_asof(cd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd",
+                                                  by="person_id", strategy="backward")
+        V = V.filter(((pl.col("vd") - pl.col("cdd")).dt.total_days() <= 365 * MIN_OBS_YEARS).fill_null(False))
+    gates = [g for g, off in [("depth", args.no_depth_gate), ("cohort_end", args.no_cohort_end),
+                              ("recent", args.no_recent_gate)] if not off]
+    print(f"active visit gates: {gates or ['(none)']}")
     # labels via case exclusion (one row per visit x case era; drop -1, then max). The SQL compares
     # case_start_DATE to visit_start_DATETIME, so a same-day case (case_start midnight < visit time)
     # excludes the visit -- we replicate that by casting case_start to a midnight datetime vs vt.
