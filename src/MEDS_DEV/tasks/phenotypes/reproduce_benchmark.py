@@ -113,6 +113,144 @@ def collapse_eras(df: pl.DataFrame, gap_days: int) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=["person_id", "case_start"], orient="row")
 
 
+def build_cohort(cond, drug, visit, op, codes, cfg) -> pl.DataFrame:
+    """The validated benchmark cohort logic, parameterized by a feature config `cfg`.
+
+    cfg keys: no_depth_gate, no_cohort_end, no_recent_gate, depth_anchor (obs_start|first_visit|
+    first_event), case_mode (encounter|any_ami), no_obs_membership. Returns (subject_id,
+    prediction_time, boolean_value). With all features ON (defaults) this is the exact benchmark.
+    """
+    direct, EMB, ACUTE_YL, AMI, VISIT_IPER = (codes[k] for k in ("direct", "EMB", "ACUTE_YL", "AMI", "VISIT_IPER"))
+    de = (cond.filter(pl.col("condition_concept_id").is_in(direct))
+          .group_by("person_id").agg(pl.col("cd").min().alias("e_direct")))
+    e_cs4 = (cond.filter(pl.col("condition_concept_id").is_in(EMB))
+             .group_by("person_id").agg(pl.col("cd").min().alias("e_cs4")))
+    # obs-period MEMBERSHIP: the benchmark only considers subjects with an observation_period row;
+    # dropping it (no_obs_membership) admits every subject with a risk_entry condition -- the ACES set.
+    base = (pl.concat([de.select("person_id"), e_cs4.select("person_id")]).unique()
+            if cfg["no_obs_membership"] else op.select("person_id").unique())
+    entry = (base.join(de, on="person_id", how="left").join(e_cs4, on="person_id", how="left")
+             .with_columns(pl.min_horizontal("e_direct", "e_cs4").alias("entry"))
+             .filter(pl.col("entry").is_not_null()))
+    acute = cond.filter(pl.col("condition_concept_id").is_in(ACUTE_YL)).select("person_id", pl.col("cd").alias("ad"))
+    bad = (entry.join(acute, on="person_id", how="left")
+           .filter((pl.col("ad") >= pl.col("entry") - pl.duration(days=7)) & (pl.col("ad") <= pl.col("entry") - pl.duration(days=1)))
+           .select("person_id").unique())
+    if not cfg.get("no_acute_exclusion"):
+        entry = entry.join(bad.with_columns(pl.lit(True).alias("drop")), on="person_id", how="left").filter(pl.col("drop").is_null())
+    contain = (entry.select("person_id", "entry").join(op, on="person_id", how="left")
+               .filter((pl.col("ostart") <= pl.col("entry")) & (pl.col("entry") <= pl.col("oend")))
+               .group_by("person_id").agg(pl.col("oend").min().alias("cohort_end")))
+    opmin = op.group_by("person_id").agg(pl.col("ostart").min().alias("ostart_min"), pl.col("oend").max().alias("oend_max"))
+    entry = (entry.select("person_id", "entry").join(contain, on="person_id", how="left").join(opmin, on="person_id", how="left")
+             .with_columns(pl.coalesce("cohort_end", "oend_max").alias("cohort_end")))
+    if cfg["case_mode"] == "any_ami":
+        cases = (cond.filter(pl.col("condition_concept_id").is_in(AMI))
+                 .select("person_id", pl.col("cd").alias("case_start")).unique())
+    else:
+        vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
+        amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
+                  .join(vip, on="person_id", how="inner")
+                  .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
+                  .select("person_id", pl.col("ami_d").alias("case_d")).unique())
+        cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
+    fv = visit.group_by("person_id").agg(pl.col("vd").min().alias("fv"))
+    fe = (pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd"),
+                     visit.select("person_id", pl.col("vd").alias("cd"))])
+          .drop_nulls().group_by("person_id").agg(pl.col("cd").min().alias("fe")))
+    Vsrc = visit.join(entry, on="person_id", how="inner").join(fv, on="person_id", how="left").join(fe, on="person_id", how="left")
+    vfilt = pl.col("vd") >= pl.col("entry")
+    if not cfg["no_cohort_end"]:
+        vfilt = vfilt & (pl.col("vd") < pl.col("cohort_end"))
+    if not cfg["no_depth_gate"]:
+        anchor = {"first_visit": pl.col("fv"), "first_event": pl.col("fe")}.get(cfg["depth_anchor"], pl.col("ostart_min"))
+        vfilt = vfilt & (pl.col("vd") >= anchor + pl.duration(days=365 * MIN_OBS_YEARS))
+    V = Vsrc.filter(vfilt).select("person_id", "vd", "vt").unique()
+    if not cfg["no_recent_gate"]:
+        cdd = pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd")]).drop_nulls().sort(["person_id", "cd"])
+        V = V.sort(["person_id", "vd"]).join_asof(cdd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd", by="person_id", strategy="backward")
+        V = V.filter(((pl.col("vd") - pl.col("cdd")).dt.total_days() <= 365 * MIN_OBS_YEARS).fill_null(False))
+    V = V.join(cases, on="person_id", how="left").with_columns(
+        pl.col("case_start").cast(pl.Datetime("us")).alias("cs_dt")).with_columns(
+        pl.when(pl.col("case_start").is_null()).then(0)
+        .when(pl.col("cs_dt") < pl.col("vt")).then(-1)
+        .when(pl.col("cs_dt") <= pl.col("vt") + pl.duration(days=365 * PREDICTION_YEARS)).then(1)
+        .otherwise(0).alias("b"))
+    return (V.filter(pl.col("b") != -1).group_by(["person_id", "vd", "vt"]).agg(pl.col("b").max().alias("boolean_value"))
+            .select(pl.col("person_id").alias("subject_id"), pl.col("vt").alias("prediction_time"), "boolean_value"))
+
+
+def _norm(df):
+    return df.select(pl.col("subject_id").cast(pl.Int64),
+                     pl.col("prediction_time").cast(pl.Datetime("us")).alias("t"),
+                     pl.col("boolean_value").cast(pl.Int8).alias("y"))
+
+
+def cohort_match(a, b) -> str:
+    """Exact (subject_id, second) match -- NO time tolerance -- with subject/point counts and the
+    2x2 label confusion matrix on exactly-matched points. `a`=A (the Python rung), `b`=B (ACES/ATLAS)."""
+    A, B = _norm(a), _norm(b)
+    sa = set(A["subject_id"].unique().to_list()); sb = set(B["subject_id"].unique().to_list())
+    j = A.join(B, on=["subject_id", "t"], how="inner", suffix="_b")
+    m = j.height
+    c = {(x, y): j.filter((pl.col("y") == x) & (pl.col("y_b") == y)).height for x in (1, 0) for y in (1, 0)}
+    agree = c[(1, 1)] + c[(0, 0)]
+    return (f"subjects: A {len(sa):,} | B {len(sb):,} | shared {len(sa & sb):,} | only-A {len(sa - sb):,} | only-B {len(sb - sa):,}\n"
+            f"   points:   A {A.height:,} | B {B.height:,} | exact-matched {m:,} | only-A {A.height - m:,} | only-B {B.height - m:,}\n"
+            f"   confusion (exact pts, A=Python B=other):  A1B1 {c[(1,1)]:,}  A1B0 {c[(1,0)]:,}  A0B1 {c[(0,1)]:,}  A0B0 {c[(0,0)]:,}\n"
+            f"   label-agree on matched: {agree:,}/{m:,} ({100*agree/max(1,m):.3f}%)")
+
+
+def load_cohort_file(path: str) -> pl.DataFrame:
+    files = ([f for f in glob.glob(os.path.join(path, "**", "*.parquet"), recursive=True) if ".logs" not in f]
+             if os.path.isdir(path) else [path])
+    df = pl.concat([pl.read_parquet(f) for f in files], how="vertical_relaxed")
+    sid = next(c for c in ("subject_id", "person_id") if c in df.columns)
+    t = next(c for c in ("prediction_time", "index_timestamp") if c in df.columns)
+    y = next(c for c in ("boolean_value", "label") if c in df.columns)
+    return df.select(pl.col(sid).alias("subject_id"), pl.col(t).alias("prediction_time"),
+                     pl.col(y).alias("boolean_value")).drop_nulls()
+
+
+def run_ladder(cond, drug, visit, op, codes, atlas, aces) -> None:
+    """Add benchmark features one rung at a time, from the ACES-expressible floor to the full
+    benchmark, and anchor both ends (R0 vs ACES; R5 vs ATLAS)."""
+    # Floor = the ACES-expressible cohort (mirrors what ACES actually does, incl. its omissions).
+    floor = dict(no_depth_gate=False, no_cohort_end=True, no_recent_gate=True, depth_anchor="first_event",
+                 case_mode="any_ami", no_obs_membership=True, no_acute_exclusion=True)
+    steps = [  # each adds ONE benchmark feature, cumulatively, up to the exact benchmark
+        ("R0 ACES-equivalent (floor)", {}),
+        ("R1 +CS0 7-day exclusion", {"no_acute_exclusion": False}),
+        ("R2 +obs_period membership", {"no_obs_membership": False}),
+        ("R3 +recent cond/drug (#9)", {"no_recent_gate": False}),
+        ("R4 +obs_start depth (vs first_event)", {"depth_anchor": "obs_start"}),
+        ("R5 +cohort_end (#10-upper)", {"no_cohort_end": False}),
+        ("R6 +encounter outcome (#2) = FULL", {"case_mode": "encounter"}),
+    ]
+    cfg = dict(floor); rungs = []
+    for name, override in steps:
+        cfg = {**cfg, **override}
+        rungs.append((name, dict(cfg)))
+    print("\n" + "=" * 86)
+    print("VALIDATION LADDER  (ACES-expressible floor -> full benchmark; each rung adds one feature)")
+    print("=" * 86)
+    outs = []; prev = None
+    for name, cfg in rungs:
+        o = build_cohort(cond, drug, visit, op, codes, cfg)
+        n = o["subject_id"].n_unique(); pts = o.height
+        outs.append(o)
+        delta = "" if prev is None else f"{n - prev:>+8,} subj"
+        print(f"  {name:36s} {n:>8,} subj | {pts:>11,} pts  {delta}")
+        prev = n
+    print("-" * 86)
+    print("ANCHOR bottom  R0 (ACES-equivalent Python)  vs  ACES output  [expect ~perfect]:")
+    print("   " + cohort_match(outs[0], aces))
+    print("ANCHOR top     R6 (full benchmark Python)   vs  ATLAS sample (sample subjects only)  [expect 100%]:")
+    samp = atlas.select(pl.col("subject_id").cast(pl.Int64)).unique()
+    r5s = outs[-1].with_columns(pl.col("subject_id").cast(pl.Int64)).join(samp, on="subject_id", how="inner")
+    print("   " + cohort_match(r5s, atlas))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--omop", required=True, help="harmonized OMOP CDM dir")
@@ -124,7 +262,16 @@ def main() -> None:
                          "Default: subjects = the --atlas cohort's subjects (the downsampled sample).")
     ap.add_argument("--case-zip", required=True)
     ap.add_argument("--risk-zip", required=True)
-    ap.add_argument("--output", required=True, help="reproduced cohort parquet")
+    ap.add_argument("--output", default=None, help="reproduced cohort parquet (required unless --ladder)")
+    ap.add_argument("--no-obs-membership", action="store_true",
+                    help="drop the obs-period MEMBERSHIP requirement (admit every risk_entry subject, "
+                         "not only those with an observation_period row) -- the ACES-expressible entry set")
+    ap.add_argument("--no-acute-exclusion", action="store_true",
+                    help="drop the CS0 Acute-MI [entry-7d, entry-1d] subject exclusion (ACES omits it)")
+    ap.add_argument("--ladder", action="store_true",
+                    help="run the feature-by-feature validation ladder (ACES-equivalent -> full benchmark); "
+                         "needs --aces for the bottom anchor and --atlas for the top anchor")
+    ap.add_argument("--aces", default=None, help="ACES output dir/parquet (the bottom-anchor reference for --ladder)")
     # gate toggles -- knock out one benchmark visit-gate at a time to measure its share of the
     # ACES-vs-benchmark gap (run each, watch subject/point count climb toward the ACES cohort).
     ap.add_argument("--no-depth-gate", action="store_true",
@@ -209,85 +356,25 @@ def main() -> None:
               ["observation_period_start_date", "observation_period_end_date"], subjects)
     op = op.with_columns(d("observation_period_start_date").alias("ostart"), d("observation_period_end_date").alias("oend"))
 
-    # ---- at-risk entry = First of {CS1/CS3, CS4} ----
-    # NB: the published ami_at_risk.json wraps CS4 in a corroboration ("(>=2 prior CS4) OR (CS4 obs
-    # + smoking value)"), but the LIVE benchmark cohort enters on the *first* CS4 (uncorroborated) --
-    # verified on residual subjects: ATLAS entry lands on the 1st CS4, not the 2nd. So we admit CS4
-    # at >=1 to match the cohort that was actually built (this also matches ACES's risk_entry).
-    de = (cond.filter(pl.col("condition_concept_id").is_in(direct))
-          .group_by("person_id").agg(pl.col("cd").min().alias("e_direct")))
-    e_cs4 = (cond.filter(pl.col("condition_concept_id").is_in(EMB))
-             .group_by("person_id").agg(pl.col("cd").min().alias("e_cs4")))
-    entry = (op.select("person_id").unique()
-             .join(de, on="person_id", how="left")
-             .join(e_cs4, on="person_id", how="left")
-             .with_columns(pl.min_horizontal("e_direct", "e_cs4").alias("entry"))
-             .filter(pl.col("entry").is_not_null()))
-    # inclusion rule: drop subjects with an Acute-MI (CS0) in [entry-7d, entry-1d]
-    acute = cond.filter(pl.col("condition_concept_id").is_in(ACUTE_YL)).select("person_id", pl.col("cd").alias("ad"))
-    bad = (entry.join(acute, on="person_id", how="left")
-           .filter((pl.col("ad") >= pl.col("entry") - pl.duration(days=7)) & (pl.col("ad") <= pl.col("entry") - pl.duration(days=1)))
-           .select("person_id").unique())
-    entry = entry.join(bad.with_columns(pl.lit(True).alias("drop")), on="person_id", how="left").filter(pl.col("drop").is_null())
-    # window bounds: cohort_end = end of the obs period CONTAINING entry (Circe default end strategy);
-    # the 2yr lookback uses the earliest obs-period start (visit qualifies if >= any obs_start + 2yr).
-    contain = (entry.select("person_id", "entry").join(op, on="person_id", how="left")
-               .filter((pl.col("ostart") <= pl.col("entry")) & (pl.col("entry") <= pl.col("oend")))
-               .group_by("person_id").agg(pl.col("oend").min().alias("cohort_end")))
-    opmin = op.group_by("person_id").agg(pl.col("ostart").min().alias("ostart_min"), pl.col("oend").max().alias("oend_max"))
-    entry = (entry.select("person_id", "entry").join(contain, on="person_id", how="left").join(opmin, on="person_id", how="left")
-             .with_columns(pl.coalesce("cohort_end", "oend_max").alias("cohort_end")))
-    print(f"at-risk subjects: {entry.height:,}")
+    codes = {"direct": direct, "EMB": EMB, "ACUTE_YL": ACUTE_YL, "AMI": AMI, "VISIT_IPER": VISIT_IPER}
 
-    # ---- case cohort: Acute-MI(CS3) during an inpatient/ER visit(CS2), ERA collapse 180+7 ----
-    # "during" = the AMI's DATE falls inside the CS2 visit's [start_date, end_date] interval (ATLAS's
-    # AdditionalCriteria, at date granularity -- see note above on lost condition times).
-    if args.case_mode == "any_ami":
-        # ACES-like outcome: every AMI(CS3) code is a "case", no encounter restriction, no ERA collapse.
-        cases = (cond.filter(pl.col("condition_concept_id").is_in(AMI))
-                 .select("person_id", pl.col("cd").alias("case_start")).unique())
-    else:
-        vip = visit.filter(pl.col("visit_concept_id").is_in(VISIT_IPER)).select("person_id", "vd", "ved")
-        amivis = (cond.filter(pl.col("condition_concept_id").is_in(AMI)).select("person_id", pl.col("cd").alias("ami_d"))
-                  .join(vip, on="person_id", how="inner")
-                  .filter((pl.col("vd") <= pl.col("ami_d")) & (pl.col("ami_d") <= pl.col("ved")))
-                  .select("person_id", pl.col("ami_d").alias("case_d")).unique())
-        # cohort interval [AMI, AMI+7] padded 180 -> merge if gap <= 187
-        cases = collapse_eras(amivis, 187) if amivis.height else pl.DataFrame(schema={"person_id": pl.Int64, "case_start": pl.Date})
-    print(f"case subjects ({args.case_mode}): {cases['person_id'].n_unique() if cases.height else 0:,}")
+    if args.ladder:
+        if not args.aces:
+            raise SystemExit("--ladder requires --aces (the ACES output dir/parquet) for the bottom anchor")
+        run_ladder(cond, drug, visit, op, codes, atlas, load_cohort_file(args.aces))
+        return
 
-    # ---- visit windowing + labels ----
-    fv = visit.group_by("person_id").agg(pl.col("vd").min().alias("fv"))  # first-visit proxy for obs-start
-    fe = (pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd"),
-                     visit.select("person_id", pl.col("vd").alias("cd"))])
-          .drop_nulls().group_by("person_id").agg(pl.col("cd").min().alias("fe")))  # first clinical event (no birth)
-    Vsrc = visit.join(entry, on="person_id", how="inner").join(fv, on="person_id", how="left").join(fe, on="person_id", how="left")
-    vfilt = pl.col("vd") >= pl.col("entry")
-    if not args.no_cohort_end:
-        vfilt = vfilt & (pl.col("vd") < pl.col("cohort_end"))
-    if not args.no_depth_gate:
-        anchor = {"first_visit": pl.col("fv"), "first_event": pl.col("fe")}.get(args.depth_anchor, pl.col("ostart_min"))
-        vfilt = vfilt & (pl.col("vd") >= anchor + pl.duration(days=365 * MIN_OBS_YEARS))
-    V = Vsrc.filter(vfilt).select("person_id", "vd", "vt").unique()
-    if not args.no_recent_gate:
-        cd = pl.concat([cond.select("person_id", "cd"), drug.select("person_id", "cd")]).drop_nulls().sort(["person_id", "cd"])
-        V = V.sort(["person_id", "vd"]).join_asof(cd.rename({"cd": "cdd"}), left_on="vd", right_on="cdd",
-                                                  by="person_id", strategy="backward")
-        V = V.filter(((pl.col("vd") - pl.col("cdd")).dt.total_days() <= 365 * MIN_OBS_YEARS).fill_null(False))
+    if not args.output:
+        raise SystemExit("--output is required unless --ladder")
+    cfg = dict(no_depth_gate=args.no_depth_gate, no_cohort_end=args.no_cohort_end,
+               no_recent_gate=args.no_recent_gate, depth_anchor=args.depth_anchor,
+               case_mode=args.case_mode, no_obs_membership=args.no_obs_membership,
+               no_acute_exclusion=args.no_acute_exclusion)
     gates = [g for g, off in [("depth", args.no_depth_gate), ("cohort_end", args.no_cohort_end),
                               ("recent", args.no_recent_gate)] if not off]
-    print(f"active visit gates: {gates or ['(none)']}")
-    # labels via case exclusion (one row per visit x case era; drop -1, then max). The SQL compares
-    # case_start_DATE to visit_start_DATETIME, so a same-day case (case_start midnight < visit time)
-    # excludes the visit -- we replicate that by casting case_start to a midnight datetime vs vt.
-    V = V.join(cases, on="person_id", how="left").with_columns(
-        pl.col("case_start").cast(pl.Datetime("us")).alias("cs_dt")).with_columns(
-        pl.when(pl.col("case_start").is_null()).then(0)
-        .when(pl.col("cs_dt") < pl.col("vt")).then(-1)
-        .when(pl.col("cs_dt") <= pl.col("vt") + pl.duration(days=365 * PREDICTION_YEARS)).then(1)
-        .otherwise(0).alias("b"))
-    out = (V.filter(pl.col("b") != -1).group_by(["person_id", "vd", "vt"]).agg(pl.col("b").max().alias("boolean_value"))
-           .select(pl.col("person_id").alias("subject_id"), pl.col("vt").alias("prediction_time"), "boolean_value"))
+    print(f"gates: {gates or ['(none)']} | depth_anchor={args.depth_anchor} | case_mode={args.case_mode} | "
+          f"obs_membership={not args.no_obs_membership}")
+    out = build_cohort(cond, drug, visit, op, codes, cfg)
     out.write_parquet(args.output)
 
     n = out["subject_id"].n_unique()
