@@ -117,14 +117,33 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--omop", required=True, help="harmonized OMOP CDM dir")
     ap.add_argument("--atlas", required=True, help="original ATLAS split parquet (subject list + compare)")
+    ap.add_argument("--subjects-from", default=None,
+                    help="parquet file or dir of shards (MEDS or ATLAS) to take the subject set from "
+                         "(reads subject_id/person_id/patient_id). Use the MEDS tuning shards to "
+                         "reproduce the WHOLE tuning split for an apples-to-apples ACES compare. "
+                         "Default: subjects = the --atlas cohort's subjects (the downsampled sample).")
     ap.add_argument("--case-zip", required=True)
     ap.add_argument("--risk-zip", required=True)
     ap.add_argument("--output", required=True, help="reproduced cohort parquet")
     args = ap.parse_args()
 
     atlas = pl.read_parquet(args.atlas)
-    subjects = atlas["subject_id"].cast(pl.Int64).unique().to_list()
-    print(f"subjects (from ATLAS): {len(subjects):,}")
+    if args.subjects_from:
+        sp = args.subjects_from
+        files = ([f for f in glob.glob(os.path.join(sp, "**", "*.parquet"), recursive=True) if ".logs" not in f]
+                 if os.path.isdir(sp) else [sp])
+        if not files:
+            raise SystemExit(f"--subjects-from matched no parquet under {sp!r}")
+        names = pl.scan_parquet(files[0]).collect_schema().names()
+        col = next((c for c in ("subject_id", "person_id", "patient_id") if c in names), None)
+        if col is None:
+            raise SystemExit(f"--subjects-from {sp!r}: no subject id column in {names}")
+        subjects = (pl.scan_parquet(files).select(pl.col(col).cast(pl.Int64, strict=False))
+                    .drop_nulls().unique().collect().to_series().to_list())
+        print(f"subjects (from {sp}, col '{col}'): {len(subjects):,}")
+    else:
+        subjects = atlas["subject_id"].cast(pl.Int64).unique().to_list()
+        print(f"subjects (from ATLAS sample): {len(subjects):,}")
 
     # Concept ids: re-resolve seed + descendants via the dataset's OWN concept_ancestor. The zip's
     # includedConcepts is a frozen snapshot that lags the live vocabulary (verified: it missed the
