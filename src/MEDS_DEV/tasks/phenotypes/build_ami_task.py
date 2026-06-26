@@ -3,10 +3,12 @@
 
 This assembles the *Layer-3* prediction task (see ``AMI_TASK_REPORT.md``): trigger on
 every visit, gate on at-risk eligibility + recent activity, exclude post-AMI visits, and
-label a first AMI within one year. Concept-set-derived predicates (``ami``, ``risk_entry``)
-are resolved straight from the ATLAS concept-set zips via the same contract documented in
-``resolve_predicates.py`` (the zip is the resolved export; exclusions/descendants are
-already baked into ``includedConcepts.csv`` / ``mappedConcepts.csv``).
+label a first AMI within one year. The concept-set-derived predicates (``ami``, ``risk_entry``)
+read their ``VOCABULARY//CODE`` lists from ``ami.txt`` / ``risk_entry.txt`` -- the concept sets
+**re-resolved from seeds via the dataset's ``concept_ancestor``**. The zip's
+``includedConcepts.csv`` is a *frozen snapshot* that lags the live vocabulary (it misses ~48
+concepts; verified against the exact OMOP reproduction in ``reproduce_benchmark.py``), so we
+no longer trust it. Regenerate the code files with the re-resolve command in that report.
 
 Predicate -> concept-set mapping:
     ami         = AMI Case zip, CS 3  ([LEGEND HTN] Acute myocardial Infarction)   # outcome + exclusion
@@ -16,10 +18,12 @@ The ``???`` predicates (visit / condition / drug / their unions) are genuinely
 dataset-specific and are left for each dataset's ``predicates.yaml`` to fill.
 
 Usage:
-    python build_ami_task.py \
-        --case-zip "<repo>/cohort_concept_sets/AMI Case.zip" \
-        --risk-zip "<repo>/cohort_concept_sets/AMI at Risk.zip" \
-        --output ami.yaml
+    python build_ami_task.py --emit task --format atlas --output ami.yaml
+    python build_ami_task.py --emit dataset-predicates --format cumc --output predicates/CUMC/ami.yaml
+    # --ami-codes / --risk-codes default to ami.txt / risk_entry.txt next to this script
+
+NOTE: ``resolve_codes`` (zip reader) is retained only for reference/provenance; the generator
+no longer uses it -- the live resolution is in ami.txt / risk_entry.txt.
 """
 
 from __future__ import annotations
@@ -277,9 +281,13 @@ predicates:
 
 
 def main() -> None:
+    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--case-zip", required=True, type=Path, help="AMI Case concept-set zip")
-    p.add_argument("--risk-zip", required=True, type=Path, help="AMI at Risk concept-set zip")
+    # Code source: the concept sets re-resolved from seeds via the dataset's concept_ancestor
+    # (the zip's includedConcepts snapshot is stale -- it misses ~48 live concepts; verified against
+    # the exact OMOP reproduction). ami.txt = case CS3; risk_entry.txt = at-risk CS1 u CS3 u CS4.
+    p.add_argument("--ami-codes", type=Path, default=here / "ami.txt", help="ami VOCAB//CODE list")
+    p.add_argument("--risk-codes", type=Path, default=here / "risk_entry.txt", help="risk_entry VOCAB//CODE list")
     p.add_argument("--output", required=True, type=Path, help="output path")
     p.add_argument("--emit", choices=["task", "dataset-predicates"], default="task",
                    help="'task' = full ami.yaml; 'dataset-predicates' = just ami/risk_entry for a "
@@ -290,13 +298,11 @@ def main() -> None:
                         "(single slash, all vocabs incl SNOMED), trigger = all Visit/ codes")
     args = p.parse_args()
 
-    ami_codes = transform(resolve_codes(args.case_zip, {3}), args.format)
-    # risk_entry = CS1 (differential) u CS3 (ischemic heart disease) u CS4 (ten closest embeddings).
-    # CS4's ATLAS corroboration ("(>=2 prior) OR (>=1 + smoking)") is inexpressible in ACES so we
-    # admit it at >=1 (minor over-inclusion, #6). NOTE: the dominant over-generation vs the benchmark
-    # is NOT this -- it is the missing observation-period window bound (#10): the benchmark's at-risk
-    # window is ~1 yr, ACES sweeps the whole multi-decade record. See report #6/#10.
-    risk_codes = transform(resolve_codes(args.risk_zip, {1, 3, 4}), args.format)
+    def read_codes(path: Path) -> list[str]:
+        return sorted({ln.strip() for ln in path.read_text().splitlines() if ln.strip()})
+
+    ami_codes = transform(read_codes(args.ami_codes), args.format)
+    risk_codes = transform(read_codes(args.risk_codes), args.format)
     print(f"[{args.format}] ami: {len(ami_codes)} codes | risk_entry: {len(risk_codes)} codes")
 
     if args.emit == "task":
