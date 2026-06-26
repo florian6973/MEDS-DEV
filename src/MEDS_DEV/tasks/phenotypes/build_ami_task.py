@@ -113,9 +113,27 @@ def code_block(codes: list[str], indent: str = "      ") -> str:
     return "\n".join(f'{indent}- "{c}"' for c in codes)
 
 
-def build_yaml(ami_codes: list[str], risk_codes: list[str]) -> str:
+def build_yaml(ami_codes: list[str], risk_codes: list[str], obs_depth_gate: bool = False) -> str:
     lookback_days = LOOKBACK_YEARS * 365
     horizon_days = PREDICTION_YEARS * 365
+    # Observation-period DEPTH gate (#10, lower bound only). Benchmark requires the visit to be
+    # >= LOOKBACK_YEARS after the earliest observation-period start (>= that much record depth). MEDS
+    # has no observation_period, so obs-start is proxied by the first event of any kind: requiring
+    # >=1 event at/before trigger-lookback means the record began >= LOOKBACK_YEARS before the visit.
+    # The benchmark's UPPER bound (visit < end of the obs period CONTAINING entry) needs obs-period
+    # gap structure MEDS lacks, so it stays irreducible (#10). Toggle with --obs-depth-gate.
+    obs_depth_window = (
+        f"""\
+  sufficient_history:
+    start: null
+    end: trigger - {lookback_days}d
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      _ANY_EVENT: (1, None)
+"""
+        if obs_depth_gate else ""
+    )
     return f"""\
 metadata:
   description: >-
@@ -180,7 +198,7 @@ windows:
     end_inclusive: True
     has:
       _ANY_EVENT: (1, None)
-  # Outcome: first AMI within the {PREDICTION_YEARS}-year horizon -> positive label.
+{obs_depth_window}  # Outcome: first AMI within the {PREDICTION_YEARS}-year horizon -> positive label.
   target:
     start: trigger
     end: start + {horizon_days}d
@@ -242,9 +260,17 @@ DATASET_VISIT_PREDICATES = {
     # 11, inpatient 21, ER 23, ...) -- which are *separate* visits (~1% co-occur), so the trigger
     # must match both or it misses every CMS-POS-coded visit. The er_visit/inpatient_visit entries
     # still resolve the task's ??? (they become unreferenced once the derived trigger is overridden).
+    # CUMC encodes inpatient/ER under the Visit/ vocabulary, NOT CMS Place of Service. The only CS2
+    # (inpatient/ER) codes with actual rows are Visit/ER (9203), Visit/IP (9201), Visit/ERIP (262 =
+    # ER+inpatient, ~540k) and CMS Place of Service/51 (8971 inpatient psych, ~9k); the CMS-POS 21/23
+    # equivalents have 0 rows. `^visit/er` matches BOTH ER and ERIP (prefix), so er_visit covers the
+    # combined type. These resolve the task's er_visit/inpatient_visit ??? and define the encounter
+    # set for an (optional) #2 outcome restriction.
     "cumc": [
-        ("er_visit", "(?i)^(visit/er|cms place of service/23)"),
-        ("inpatient_visit", "(?i)^(visit/ip|cms place of service/21)"),
+        ("er_visit", "(?i)^visit/er"),
+        ("inpatient_visit", "(?i)^(visit/ip|cms place of service/51)"),
+        # benchmark triggers on ALL visit_occurrence rows (reproduce_benchmark.py ~L239), so the
+        # trigger override matches every Visit/ and CMS Place of Service/ code (incl. outpatient).
         ("inpatient_or_er_visit", "(?i)^(visit/|cms place of service/)"),
     ],
 }
@@ -296,6 +322,9 @@ def main() -> None:
                    help="code format. 'atlas' = VOCAB//CODE (task default); 'mimic' = "
                         "DIAGNOSIS//ICD//{9,10}//<no-dots>, ICD-only; 'cumc' = VOCAB/CODE "
                         "(single slash, all vocabs incl SNOMED), trigger = all Visit/ codes")
+    p.add_argument("--obs-depth-gate", action="store_true",
+                   help="add the #10 lower-bound window (sufficient_history): require >=1 event at/"
+                        "before trigger-2yr, i.e. >=2yr of record depth. Off by default for A/B testing.")
     args = p.parse_args()
 
     def read_codes(path: Path) -> list[str]:
@@ -308,7 +337,7 @@ def main() -> None:
     if args.emit == "task":
         if args.format != "atlas":
             raise SystemExit("--emit task only supports --format atlas (keep the task dataset-agnostic)")
-        args.output.write_text(build_yaml(ami_codes, risk_codes))
+        args.output.write_text(build_yaml(ami_codes, risk_codes, obs_depth_gate=args.obs_depth_gate))
     else:
         args.output.write_text(build_dataset_predicates(ami_codes, risk_codes, args.format))
     print(f"Wrote {args.output}")
