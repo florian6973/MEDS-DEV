@@ -16,9 +16,9 @@ Concept ids come from the standard "Concept ID" column of each concept-set zip's
 (post descendant/exclusion resolution), matched against condition_concept_id / visit_concept_id.
 
 Exact Circe/SQL semantics implemented:
-  - at-risk entry = First of {CS1/CS3 condition; CS4 condition corroborated by >=2 prior CS4 OR a
-    CS4-concept observation with a smoking value}; minus the "no Acute-MI(CS0) in [entry-7d, entry-1d]"
-    inclusion rule.
+  - at-risk entry = First of {CS1/CS3 condition; CS4 condition}; minus the "no Acute-MI(CS0) in
+    [entry-7d, entry-1d]" inclusion rule. (CS4 is admitted at the FIRST occurrence: the published
+    JSON specifies a corroboration but the live benchmark cohort ignores it -- verified empirically.)
   - cohort end = end of the observation period containing the entry (Circe default, no EndStrategy);
     the 2yr lookback compares to the earliest obs-period start.
   - case = Acute-MI(CS3) whose date is inside an inpatient/ER visit(CS2) interval
@@ -119,30 +119,23 @@ def main() -> None:
         pl.col(dtcol).cast(pl.Utf8).str.slice(0, 19).str.to_datetime(strict=False).alias("vt"))
     drug = load(args.omop, "drug_exposure", ["drug_exposure_start_date"], subjects).with_columns(
         d("drug_exposure_start_date").alias("cd"))
-    obs = load(args.omop, "observation", ["observation_concept_id", "value_as_concept_id", "observation_date"], subjects)
     op = load(args.omop, "observation_period",
               ["observation_period_start_date", "observation_period_end_date"], subjects)
     op = op.with_columns(d("observation_period_start_date").alias("ostart"), d("observation_period_end_date").alias("oend"))
 
-    # ---- at-risk entry = First of {CS1/CS3 directly, corroborated CS4} ----
+    # ---- at-risk entry = First of {CS1/CS3, CS4} ----
+    # NB: the published ami_at_risk.json wraps CS4 in a corroboration ("(>=2 prior CS4) OR (CS4 obs
+    # + smoking value)"), but the LIVE benchmark cohort enters on the *first* CS4 (uncorroborated) --
+    # verified on residual subjects: ATLAS entry lands on the 1st CS4, not the 2nd. So we admit CS4
+    # at >=1 to match the cohort that was actually built (this also matches ACES's risk_entry).
     de = (cond.filter(pl.col("condition_concept_id").is_in(direct))
           .group_by("person_id").agg(pl.col("cd").min().alias("e_direct")))
-    emb = cond.filter(pl.col("condition_concept_id").is_in(EMB)).select("person_id", "cd")
-    # (a) >=2 CS4 in (-inf, index]  -> earliest qualifying index = the 2nd CS4 condition date
-    e_a = (emb.group_by("person_id").agg(pl.col("cd").sort().alias("ds"))
-           .with_columns(pl.col("ds").list.get(1, null_on_oob=True).alias("e_cs4a")))
-    # (b) >=1 Observation with concept in CS4 AND smoking value in (-inf, index]
-    #     -> earliest CS4 condition at/after the first such observation
-    qsmoke = (obs.filter(pl.col("observation_concept_id").cast(pl.Int64, strict=False).is_in(EMB)
-                         & pl.col("value_as_concept_id").cast(pl.Int64, strict=False).is_in(SMOKING_CONCEPTS))
-              .group_by("person_id").agg(d("observation_date").min().alias("smoke0")))
-    e_b = (emb.join(qsmoke, on="person_id", how="inner").filter(pl.col("cd") >= pl.col("smoke0"))
-           .group_by("person_id").agg(pl.col("cd").min().alias("e_cs4b")))
+    e_cs4 = (cond.filter(pl.col("condition_concept_id").is_in(EMB))
+             .group_by("person_id").agg(pl.col("cd").min().alias("e_cs4")))
     entry = (op.select("person_id").unique()
              .join(de, on="person_id", how="left")
-             .join(e_a.select("person_id", "e_cs4a"), on="person_id", how="left")
-             .join(e_b, on="person_id", how="left")
-             .with_columns(pl.min_horizontal("e_direct", "e_cs4a", "e_cs4b").alias("entry"))
+             .join(e_cs4, on="person_id", how="left")
+             .with_columns(pl.min_horizontal("e_direct", "e_cs4").alias("entry"))
              .filter(pl.col("entry").is_not_null()))
     # inclusion rule: drop subjects with an Acute-MI (CS0) in [entry-7d, entry-1d]
     acute = cond.filter(pl.col("condition_concept_id").is_in(ACUTE_YL)).select("person_id", pl.col("cd").alias("ad"))
