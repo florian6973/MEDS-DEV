@@ -110,20 +110,22 @@ aces-cli cohort_dir=. cohort_name=ami_full data.standard=meds data.path=$MEDS_FL
 python -c "
 import polars as pl
 from reproduce_benchmark import cmp1, load_cohort_file as L
-Dt = lambda p: L(p).with_columns(pl.col('prediction_time').dt.truncate('1d'))   # date granularity
-print('live cohort  OMOP-default == ATLAS  :', cmp1(Dt('omop_live.parquet'), Dt('$ATLAS')))
-print('translation  ACES == MEDS-ref(aces):', cmp1(L('meds_aces.parquet'), L('aces_full.parquet')))
-print('fidelity     MEDS-ref(r0) == OMOP   :', cmp1(L('omop_r0.parquet'),  L('meds_r0.parquet')))
-print('logic gap    MEDS-ref(r0) vs (aces) :', cmp1(L('meds_r0.parquet'),  L('meds_aces.parquet')))
+Dt = lambda p: L(p).with_columns(pl.col('prediction_time').dt.truncate('1d'))   # fold to date
+print('live cohort  OMOP-default == ATLAS  :', cmp1(L('omop_live.parquet'),     L('$ATLAS')))        # EXACT
+print('translation  ACES == MEDS-ref(aces):', cmp1(L('meds_aces.parquet'),     L('aces_full.parquet')))
+print('fidelity     MEDS-ref(r0) == OMOP   :', cmp1(Dt('omop_r0.parquet'),      L('meds_r0.parquet')))  # MEDS lost time -> date
+print('logic gap    MEDS-ref(r0) vs (aces) :', cmp1(L('meds_r0.parquet'),       L('meds_aces.parquet')))
 "
 ```
 
+**Time granularity matters per comparison.** OMOP (`reproduce_benchmark.py`) and ATLAS both keep the
+true `visit_start_datetime`, so **OMOP↔ATLAS is EXACT** (`pts exact = the ATLAS sample, onlyB 0,
+~100%` — no truncation). The MEDS ETL drops visit times to midnight, so **OMOP↔MEDS folds to date**.
 The **live-cohort** match comes from the all-defaults run (full benchmark, ATLAS subjects):
-`python ../reproduce_benchmark.py --omop "$H" --atlas "$ATLAS" --case-zip … --risk-zip … --output omop_live.parquet`.
-Compare it at **date granularity** (ATLAS is day-resolution; the reproduction may carry
-`visit_start_datetime`) — that's the validated exact match (`pts exact = the ATLAS sample, onlyB 0,
-100%`). ATLAS is a `phenotype_sample` downsample, so `onlyA` (the unsampled full cohort) is large by
-design; the proof is `onlyB ≈ 0` + label agreement ~100%.
+`python ../reproduce_benchmark.py --omop "$H" --atlas "$ATLAS" --case-zip … --risk-zip … --output omop_live.parquet`
+— use the **repo** script (it keeps the datetime); a date-forcing copy will under-match. ATLAS is a
+`phenotype_sample` downsample, so `onlyA` (the unsampled full cohort) is large by design; the proof
+is `onlyB 0`.
 
 With `ami_full.yaml` on the **live** CS4≥1 (the shipped default), the **logic gap** (`MEDS-ref(r0)`
 vs `(aces)`) collapses to just the multi-AMI quirk + ERA + cohort-end (~26k); it is ~290k only if you

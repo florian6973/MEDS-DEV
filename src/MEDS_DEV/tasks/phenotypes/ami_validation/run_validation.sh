@@ -47,16 +47,16 @@ python -c "
 import polars as pl
 from reproduce_benchmark import cmp1, load_cohort_file as L
 O='$OUT'; ATLAS='$ATLAS'
-# live-cohort: compare at DATE granularity (ATLAS is day-resolution; the reproduction may carry
-# visit_start_datetime). ATLAS is also a phenotype_sample downsample, so onlyA (unsampled full
-# cohort) is large by design; the proof is onlyB ~0 + label agreement ~100%.
+# Time granularity: OMOP (reproduce_benchmark) and ATLAS both keep the true visit_start_datetime, so
+# OMOP<->ATLAS is EXACT. The MEDS ETL dropped visit times to midnight, so OMOP<->MEDS must fold to
+# date. (ATLAS is a phenotype_sample downsample, so its onlyA is large by design; proof is onlyB 0.)
 Dt = lambda p: L(p).with_columns(pl.col('prediction_time').dt.truncate('1d'))
-print('=== live cohort: OMOP full-benchmark == ATLAS (date-exact) -> onlyB ~0, ~100% ===')
-print(cmp1(Dt(O+'/omop_live.parquet'), Dt(ATLAS)))
-print('=== translation: ACES == MEDS-ref(aces)  -> expect 0/0 ===')
+print('=== live cohort: OMOP full-benchmark == ATLAS (EXACT datetime) -> onlyB 0, ~100% ===')
+print(cmp1(L(O+'/omop_live.parquet'), L(ATLAS)))
+print('=== translation: ACES == MEDS-ref(aces) (both MEDS midnight) -> expect 0/0 ===')
 print(cmp1(L(O+'/meds_aces.parquet'), L(O+'/aces_full.parquet')))
-print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) -> residual = \$H<->MEDS drift ===')
-print(cmp1(L(O+'/omop_r0.parquet'),  L(O+'/meds_r0.parquet')))
+print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) at DATE (MEDS dropped visit time) -> ~\$H<->MEDS drift ===')
+print(cmp1(Dt(O+'/omop_r0.parquet'),  L(O+'/meds_r0.parquet')))
 print('=== logic gap:   MEDS-ref(r0) vs MEDS-ref(aces) -> PURE logic, no drift ===')
 print('    (onlyA r0-extra = corroboration + multi-AMI quirk; onlyB aces-extra = R5 cohort-end over-inclusion)')
 print(cmp1(L(O+'/meds_r0.parquet'),  L(O+'/meds_aces.parquet')))
