@@ -20,7 +20,15 @@ PRED=${PRED:-predicates/CUMC/ami_full.yaml}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ami_validation}; mkdir -p "$OUT"
 
-# --- (a) OMOP reference (the benchmark SQL), full minus encounter is case-mode -------------------
+# --- (a0) LIVE-COHORT SANITY: full benchmark (all defaults) on the ATLAS subjects == original ATLAS
+#         This is the "perfectly matches the live cohort" check (expect ~100%). No --subjects-from
+#         (defaults to the ATLAS cohort's own subjects); no --no-* flags (every gate + membership +
+#         CS0 on, case-mode=encounter, depth-anchor=obs_start).
+python "$HERE/../reproduce_benchmark.py" --omop "$H" --atlas "$ATLAS" \
+  --case-zip "$ZIPS/AMI Case.zip" --risk-zip "$ZIPS/AMI at Risk.zip" \
+  --output "$OUT/omop_live.parquet"
+
+# --- (a) OMOP reference on the MEDS subjects (apples-to-apples vs the MEDS reference) -------------
 python "$HERE/../reproduce_benchmark.py" --omop "$H" --atlas "$ATLAS" --subjects-from "$MEDS" \
   --case-zip "$ZIPS/AMI Case.zip" --risk-zip "$ZIPS/AMI at Risk.zip" \
   --depth-anchor obs_start --case-mode encounter --output "$OUT/omop_r0.parquet"
@@ -37,7 +45,9 @@ aces-cli cohort_dir="$HERE" cohort_name=ami_full data.standard=meds data.path="$
 cd "$HERE/.."
 python -c "
 from reproduce_benchmark import cmp1, load_cohort_file as L
-O='$OUT'
+O='$OUT'; ATLAS='$ATLAS'
+print('=== live cohort: OMOP full-benchmark == original ATLAS -> expect ~100% ===')
+print(cmp1(L(O+'/omop_live.parquet'), L(ATLAS)))
 print('=== translation: ACES == MEDS-ref(aces)  -> expect 0/0 ===')
 print(cmp1(L(O+'/meds_aces.parquet'), L(O+'/aces_full.parquet')))
 print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) -> residual = \$H<->MEDS drift ===')

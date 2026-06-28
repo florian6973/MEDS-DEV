@@ -12,6 +12,9 @@ Three views of the *same* CUMC patients are compared, exact `(subject, second)`:
    reproduce_benchmark.py (raw OMOP, = the SQL)    ──┘                 residual = $H<->MEDS drift
 ```
 
+- **`reproduce_benchmark` (all defaults) == original ATLAS** is the *live-cohort* check — the OMOP
+  Python reproduces the published cohort exactly (**~100%**); this is the ground truth everything
+  else is measured against.
 - **`ACES == reproduce_meds`** is the *translation* check (must be `0/0` — the YAML and the
   hand-written reference are the same logic).
 - **`reproduce_meds(mode=r0) == reproduce_benchmark`** is the *fidelity* check (residual ≈ 0.066%
@@ -103,12 +106,16 @@ aces-cli cohort_dir=. cohort_name=ami_full data.standard=meds data.path=$MEDS_FL
 ```bash
 python -c "
 from reproduce_benchmark import cmp1, load_cohort_file as L
+print('live cohort  OMOP-default == ATLAS  :', cmp1(L('omop_live.parquet'), L('$ATLAS')))
 print('translation  ACES == MEDS-ref(aces):', cmp1(L('meds_aces.parquet'), L('aces_full.parquet')))
 print('fidelity     MEDS-ref(r0) == OMOP   :', cmp1(L('omop_r0.parquet'),  L('meds_r0.parquet')))
 "
 ```
 
-Expected: translation **`0/0`**; fidelity **~99.985%**, residual attributable to the AMI concept
+The **live-cohort** match comes from the all-defaults run (full benchmark, ATLAS subjects):
+`python ../reproduce_benchmark.py --omop "$H" --atlas "$ATLAS" --case-zip … --risk-zip … --output omop_live.parquet`.
+
+Expected: live cohort **~100%**; translation **`0/0`**; fidelity **~99.985%**, residual attributable to the AMI concept
 remap + unmapped-`concept_id 0` drops (see `MAPPING.md` and the report's drift ledger). The
 **multi-AMI quirk** (≈26,539 pts) appears only if you compare `mode=aces` (first-AMI) against the
 SQL (`last`): it is the one inexpressible logic gap, an SQL artifact we do not ship.
