@@ -43,15 +43,16 @@ aces-cli cohort_dir="$HERE" cohort_name=ami_full data.standard=meds data.path="$
 
 # --- (d) compare (identical cmp1 on every pair) --------------------------------------------------
 cd "$HERE/.."
-# live-cohort match: ATLAS carries visit datetimes + is a downsample, so use the tolerant
-# comparator (nearest within a day), NOT exact cmp1. Expect label agreement ~100% on the matched
-# sample, only-ATLAS ~0, only-ACES large (the unsampled full cohort).
-echo "=== live cohort: OMOP full-benchmark vs original ATLAS (tolerant, ~100% label agreement) ==="
-python "$HERE/../compare_aces_atlas.py" --aces "$OUT/omop_live.parquet" --atlas "$ATLAS" --tolerance 1d
-
 python -c "
+import polars as pl
 from reproduce_benchmark import cmp1, load_cohort_file as L
-O='$OUT'
+O='$OUT'; ATLAS='$ATLAS'
+# live-cohort: compare at DATE granularity (ATLAS is day-resolution; the reproduction may carry
+# visit_start_datetime). ATLAS is also a phenotype_sample downsample, so onlyA (unsampled full
+# cohort) is large by design; the proof is onlyB ~0 + label agreement ~100%.
+Dt = lambda p: L(p).with_columns(pl.col('prediction_time').dt.truncate('1d'))
+print('=== live cohort: OMOP full-benchmark == ATLAS (date-exact) -> onlyB ~0, ~100% ===')
+print(cmp1(Dt(O+'/omop_live.parquet'), Dt(ATLAS)))
 print('=== translation: ACES == MEDS-ref(aces)  -> expect 0/0 ===')
 print(cmp1(L(O+'/meds_aces.parquet'), L(O+'/aces_full.parquet')))
 print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) -> residual = \$H<->MEDS drift ===')

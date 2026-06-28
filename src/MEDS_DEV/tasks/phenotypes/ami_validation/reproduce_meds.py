@@ -53,8 +53,9 @@ BASE_PREDICATES = ["ami", "ip_er_start", "ip_er_end", "any_visit", "condition_or
                    "cs13", "cs4", "smoking", "obs_period_start", "obs_period_end"]
 
 PRESETS = {
-    # ACES task semantics (what `ACES == reproduce_meds = 0/0` validates).
-    "aces": dict(case_mode="encounter", cs4_min=2, multi_ami="first", era_collapse=False,
+    # ACES task semantics (what `ACES == reproduce_meds = 0/0` validates). cs4_min=1 matches the LIVE
+    # ami_full.yaml (ATLAS labels ignore the CS4 corroboration); pass --cs4-min 2 for the published variant.
+    "aces": dict(case_mode="encounter", cs4_min=1, multi_ami="first", era_collapse=False,
                  cohort_end="during_obs", depth_anchor="obs_start", recent_gate=True),
     # reproduce_benchmark.py full-benchmark semantics (R5/R6) -- the SQL artifacts included.
     "r0":   dict(case_mode="encounter", cs4_min=1, multi_ami="last",  era_collapse=True,
