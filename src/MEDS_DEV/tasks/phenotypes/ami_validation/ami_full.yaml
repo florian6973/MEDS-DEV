@@ -24,7 +24,6 @@ predicates:
   any_visit: "???"           # any visit start (the trigger universe)
   cs13: "???"                # at-risk direct: differential (CS1) U ischemic heart disease (CS3) start
   cs4: "???"                 # at-risk embedding set (CS4) start
-  smoking: "???"             # smoking-status concepts (the #6 corroboration)
   obs_period_start: "???"    # observation_period start
   obs_period_end: "???"      # observation_period end
   # WIDENED recent-activity predicate: R0 counts ANY condition_occurrence/drug_exposure; match that
@@ -34,8 +33,6 @@ predicates:
   # --- relational / derived (fork constructs; dataset-independent) ---
   ami_encounter:             # #2: an AMI occurring DURING an inpatient/ER stay
     during: { event: ami, opens: ip_er_start, closes: ip_er_end, closed: both }
-  cs4_smk:                   # PUBLISHED-VARIANT ONLY (unused in the live at_risk above): a CS4
-    within: { event: cs4, of: smoking, before: 36500d, after: 36500d }   # corroborated by smoking (#6)
   visit_in_obs:              # R5: a visit inside an observation period (cohort-end upper bound)
     during: { event: any_visit, opens: obs_period_start, closes: obs_period_end, closed: left }
 
@@ -45,8 +42,9 @@ windows:
   at_risk_entry:             # LIVE benchmark: CS1 U CS3 U CS4 (>=1) -- what the ATLAS labels use.
                              # The PUBLISHED JSON adds CS4 corroboration (>=2 OR +smoking); the live
                              # ATLAS cohort ignores it (corroboration diverges by ~290k pts). For the
-                             # published variant use the corroborated has_any (cs4_smk/smoking below):
-                             #   has_any: [ {cs13:(1,None)}, {cs4:(2,None)}, {cs4_smk:(1,None)} ]
+                             # published variant, re-add `smoking` + a `cs4_smk` within-predicate
+                             # (cs4_smk: { within: { event: cs4, of: smoking, before: 36500d, after:
+                             # 36500d } }) and use: has_any: [ {cs13:(1,None)}, {cs4:(2,None)}, {cs4_smk:(1,None)} ]
     start: null
     end: trigger
     start_inclusive: True

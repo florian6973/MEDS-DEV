@@ -47,10 +47,13 @@ MIN_OBS_YEARS = 2
 PREDICTION_YEARS = 1
 ERA_GAP_DAYS = 187
 
-# Base code predicates this reference needs from the predicates YAML. Relational predicates
+# Base code predicates this reference reads. `smoking` is OPTIONAL -- only the published CS4
+# corroboration variant uses it; the live (CS4>=1) task omits it. Relational predicates
 # (ami_encounter, visit_in_obs, cs4_smk) are derived here, not read.
-BASE_PREDICATES = ["ami", "ip_er_start", "ip_er_end", "any_visit", "condition_or_drug",
-                   "cs13", "cs4", "smoking", "obs_period_start", "obs_period_end"]
+REQUIRED_PREDICATES = ["ami", "ip_er_start", "ip_er_end", "any_visit", "condition_or_drug",
+                       "cs13", "cs4", "obs_period_start", "obs_period_end"]
+OPTIONAL_PREDICATES = ["smoking"]
+BASE_PREDICATES = REQUIRED_PREDICATES + OPTIONAL_PREDICATES
 
 PRESETS = {
     # ACES task semantics (what `ACES == reproduce_meds = 0/0` validates). cs4_min=1 matches the LIVE
@@ -74,6 +77,8 @@ def load_predicates(path: str) -> dict:
     out = {}
     for name in BASE_PREDICATES:
         if name not in preds:
+            if name in OPTIONAL_PREDICATES:
+                continue
             raise SystemExit(f"[predicates] {path!r} is missing base predicate {name!r}")
         spec = preds[name].get("code", preds[name])
         if "regex" not in spec and "any" not in spec:
@@ -100,8 +105,12 @@ def _flag(spec: dict) -> pl.Expr:
 def build_cohort(meds: pl.DataFrame, preds: dict, cfg: dict) -> pl.DataFrame:
     """Per-visit AMI cohort on MEDS, parameterized by cfg (see PRESETS / --help)."""
     # 1. one row per (subject, timestamp) with the per-predicate occurrence counts.
-    ev = meds.select("subject_id", "time", *[_flag(preds[p]).alias(p) for p in BASE_PREDICATES])
-    G = (ev.group_by("subject_id", "time").agg([pl.col(p).sum() for p in BASE_PREDICATES])
+    present = [p for p in BASE_PREDICATES if p in preds]
+    ev = meds.select("subject_id", "time", *[_flag(preds[p]).alias(p) for p in present])
+    if "smoking" not in present:                       # optional; cs4_smk becomes a dead branch
+        ev = ev.with_columns(pl.lit(0, dtype=pl.Int64).alias("smoking"))
+    pred_cols = REQUIRED_PREDICATES + ["smoking"]
+    G = (ev.group_by("subject_id", "time").agg([pl.col(p).sum() for p in pred_cols])
          .rename({"time": "ts"}).sort(["subject_id", "ts"]))
 
     # 2. encounter-AMI via `during`: AMI inside an open [ip_er_start .. ip_er_end] (net-open, closed=both).
