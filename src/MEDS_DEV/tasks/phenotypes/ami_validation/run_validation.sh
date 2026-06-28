@@ -30,9 +30,11 @@ python "$HERE/../reproduce_benchmark.py" --omop "$H" --atlas "$ATLAS" \
   --output "$OUT/omop_live.parquet"
 
 # --- (a) OMOP reference on the MEDS subjects (apples-to-apples vs the MEDS reference) -------------
+#         --prediction-time date: the MEDS build dropped visit times to midnight, so emit date-keyed
+#         (deduped per day) here -- a datetime output would fan out the OMOP-vs-MEDS join.
 python "$HERE/../reproduce_benchmark.py" --omop "$H" --atlas "$ATLAS" --subjects-from "$MEDS" \
   --case-zip "$ZIPS/AMI Case.zip" --risk-zip "$ZIPS/AMI at Risk.zip" \
-  --depth-anchor obs_start --case-mode encounter --output "$OUT/omop_r0.parquet"
+  --depth-anchor obs_start --case-mode encounter --prediction-time date --output "$OUT/omop_r0.parquet"
 
 # --- (b) MEDS reference, both presets ------------------------------------------------------------
 python "$HERE/reproduce_meds.py" --meds "$MEDS" --predicates "$PRED" --mode aces --output "$OUT/meds_aces.parquet"
@@ -48,16 +50,16 @@ python -c "
 import polars as pl
 from reproduce_benchmark import cmp1, load_cohort_file as L
 O='$OUT'; ATLAS='$ATLAS'
-# Time granularity: OMOP (reproduce_benchmark) and ATLAS both keep the true visit_start_datetime, so
-# OMOP<->ATLAS is EXACT. The MEDS ETL dropped visit times to midnight, so OMOP<->MEDS must fold to
-# date. (ATLAS is a phenotype_sample downsample, so its onlyA is large by design; proof is onlyB 0.)
-Dt = lambda p: L(p).with_columns(pl.col('prediction_time').dt.truncate('1d'))
+# Time granularity is handled AT THE SOURCE, not by truncation: omop_live keeps the true
+# visit_start_datetime (matches ATLAS exactly); omop_r0 was built --prediction-time date (deduped
+# per day) to match the midnight MEDS build. So every cmp1 below is a clean exact key join.
+# (ATLAS is a phenotype_sample downsample, so its onlyA is large by design; proof is onlyB 0.)
 print('=== live cohort: OMOP full-benchmark == ATLAS (EXACT datetime) -> onlyB 0, ~100% ===')
 print(cmp1(L(O+'/omop_live.parquet'), L(ATLAS)))
 print('=== translation: ACES == MEDS-ref(aces) (both MEDS midnight) -> expect 0/0 ===')
 print(cmp1(L(O+'/meds_aces.parquet'), L(O+'/aces_full.parquet')))
-print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) at DATE (MEDS dropped visit time) -> ~\$H<->MEDS drift ===')
-print(cmp1(Dt(O+'/omop_r0.parquet'),  L(O+'/meds_r0.parquet')))
+print('=== fidelity:    MEDS-ref(r0) == OMOP(R0, date-keyed) -> ~\$H<->MEDS drift ===')
+print(cmp1(L(O+'/omop_r0.parquet'),  L(O+'/meds_r0.parquet')))
 print('=== logic gap:   MEDS-ref(r0) vs MEDS-ref(aces) -> PURE logic, no drift ===')
 print('    (onlyA r0-extra = corroboration + multi-AMI quirk; onlyB aces-extra = R5 cohort-end over-inclusion)')
 print(cmp1(L(O+'/meds_r0.parquet'),  L(O+'/meds_aces.parquet')))

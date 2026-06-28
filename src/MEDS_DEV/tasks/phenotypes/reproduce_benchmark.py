@@ -302,6 +302,11 @@ def main() -> None:
                     help="outcome definition: encounter (AMI during an inpatient/ER visit + ERA-collapse "
                          "= the benchmark, #2); any_ami (any AMI code, no encounter/ERA = ACES-like). "
                          "Run both on identical points to isolate the #2/ERA share of label disagreement.")
+    ap.add_argument("--prediction-time", choices=["datetime", "date"], default="datetime",
+                    help="prediction_time granularity. datetime (default) = the true visit_start_datetime "
+                         "-> matches ATLAS exactly. date = visit_start_date midnight -> matches the MEDS "
+                         "build (which dropped visit times); use this for OMOP-vs-MEDS so same-day visits "
+                         "dedupe to one row instead of fanning out the join.")
     args = ap.parse_args()
 
     atlas = pl.read_parquet(args.atlas)
@@ -361,9 +366,14 @@ def main() -> None:
     # visit" CONTAINMENT is done at DATE granularity (datetime there would drop AMIs whose only
     # inpatient/ER visit starts after 00:00 -- verified: 44 FN). The case-EXCLUSION label, however,
     # compares case_start_date to visit_start_DATETIME (vt) exactly as the SQL -- visit times are reliable.
+    # prediction_time source: datetime = the true visit_start_datetime (matches ATLAS exactly);
+    # date = visit_start_date midnight (matches the MEDS build, which dropped visit times to date --
+    # use this for OMOP-vs-MEDS so same-day visits dedupe instead of fanning out the join).
+    vt = (d("visit_start_date").cast(pl.Datetime("us")) if args.prediction_time == "date"
+          else pl.col(dtcol).cast(pl.Utf8).str.to_datetime(strict=False))
     visit = visit.with_columns(
         pl.col("visit_concept_id").cast(pl.Int64), d("visit_start_date").alias("vd"), d(vend).alias("ved"),
-        pl.col(dtcol).cast(pl.Utf8).str.to_datetime(strict=False).alias("vt"))
+        vt.alias("vt"))
     drug = load(args.omop, "drug_exposure", ["drug_exposure_start_date"], subjects).with_columns(
         d("drug_exposure_start_date").alias("cd"))
     op = load(args.omop, "observation_period",
