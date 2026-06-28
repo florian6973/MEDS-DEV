@@ -52,4 +52,7 @@ print('=== translation: ACES == MEDS-ref(aces)  -> expect 0/0 ===')
 print(cmp1(L(O+'/meds_aces.parquet'), L(O+'/aces_full.parquet')))
 print('=== fidelity:    MEDS-ref(r0) == OMOP(R0) -> residual = \$H<->MEDS drift ===')
 print(cmp1(L(O+'/omop_r0.parquet'),  L(O+'/meds_r0.parquet')))
+print('=== logic gap:   MEDS-ref(r0) vs MEDS-ref(aces) -> PURE logic, no drift ===')
+print('    (onlyA r0-extra = corroboration + multi-AMI quirk; onlyB aces-extra = R5 cohort-end over-inclusion)')
+print(cmp1(L(O+'/meds_r0.parquet'),  L(O+'/meds_aces.parquet')))
 "

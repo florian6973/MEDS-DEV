@@ -19,6 +19,9 @@ Three views of the *same* CUMC patients are compared, exact `(subject, second)`:
   hand-written reference are the same logic).
 - **`reproduce_meds(mode=r0) == reproduce_benchmark`** is the *fidelity* check (residual ≈ 0.066%
   ETL drift — AMI concept remap + unmapped-`concept_id 0` drops).
+- **`reproduce_meds(aces) vs reproduce_meds(r0)`** is the *logic-gap* check — both on the **same**
+  MEDS data, so it isolates the pure logic/definitional differences (CS4 corroboration + multi-AMI
+  quirk + ERA + cohort-end) with **zero data drift**.
 
 ## Files
 
@@ -109,6 +112,7 @@ from reproduce_benchmark import cmp1, load_cohort_file as L
 print('live cohort  OMOP-default == ATLAS  :', cmp1(L('omop_live.parquet'), L('$ATLAS')))
 print('translation  ACES == MEDS-ref(aces):', cmp1(L('meds_aces.parquet'), L('aces_full.parquet')))
 print('fidelity     MEDS-ref(r0) == OMOP   :', cmp1(L('omop_r0.parquet'),  L('meds_r0.parquet')))
+print('logic gap    MEDS-ref(r0) vs (aces) :', cmp1(L('meds_r0.parquet'),  L('meds_aces.parquet')))
 "
 ```
 
