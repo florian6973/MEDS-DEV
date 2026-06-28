@@ -4,19 +4,20 @@
 #   ACES == reproduce_meds(aces)   -> translation check   (expect 0/0)
 #   reproduce_meds(r0) == reproduce_benchmark  -> fidelity (expect ~99.985%, residual = $H<->MEDS drift)
 #
-# Run on the server (the OMOP $H + the OMOP-MEDS build are there). Edit the paths, then:
+# Run on the server (the OMOP $H + the OMOP-MEDS build are there). Set the env vars, then:
 #   bash run_validation.sh
-# Prereqs: an interval_logic-fork ACES venv (meds>=0.4) on PATH as `aces-cli`; the concept-id
-# predicates at $PRED (see README.md §1); the OMOP-MEDS build (README.md §0).
+# Prereqs: an interval_logic-fork aces-cli (meds>=0.4) at $ACES_CLI; a RESOLVED concept-id task at
+# $PRED (predicates + windows in one yaml -- see README.md §1); the OMOP-MEDS build (README.md §0).
 set -euo pipefail
 
-# --- paths (EDIT) ---------------------------------------------------------------------------------
+# --- paths (set as env vars) ----------------------------------------------------------------------
 H=${H:?set H to the harmonized OMOP dir}
 ZIPS=${ZIPS:?set ZIPS to the cohort_concept_sets dir}
 ATLAS=${ATLAS:?set ATLAS to the AMI tuning.parquet}
 MEDS=${MEDS:?set MEDS to <build>/MEDS_cohort/data/tuning}
-MEDS_FLAT=${MEDS_FLAT:-$MEDS}          # the flattened MEDS path the ACES fork reads
-PRED=${PRED:-predicates/CUMC/ami_full.yaml}
+MEDS_FLAT=${MEDS_FLAT:-$MEDS}          # the flattened MEDS path the ACES fork reads (data.path)
+PRED=${PRED:?set PRED to the RESOLVED concept-id task yaml (predicates+windows), e.g. /tmp/ami_live.yaml}
+ACES_CLI=${ACES_CLI:-aces-cli}         # interval_logic-fork aces-cli, e.g. /tmp/aces_iv_venv/bin/aces-cli
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ami_validation}; mkdir -p "$OUT"
 
@@ -34,12 +35,12 @@ python "$HERE/../reproduce_benchmark.py" --omop "$H" --atlas "$ATLAS" --subjects
   --depth-anchor obs_start --case-mode encounter --output "$OUT/omop_r0.parquet"
 
 # --- (b) MEDS reference, both presets ------------------------------------------------------------
-python "$HERE/reproduce_meds.py" --meds "$MEDS" --predicates "$HERE/$PRED" --mode aces --output "$OUT/meds_aces.parquet"
-python "$HERE/reproduce_meds.py" --meds "$MEDS" --predicates "$HERE/$PRED" --mode r0   --output "$OUT/meds_r0.parquet"
+python "$HERE/reproduce_meds.py" --meds "$MEDS" --predicates "$PRED" --mode aces --output "$OUT/meds_aces.parquet"
+python "$HERE/reproduce_meds.py" --meds "$MEDS" --predicates "$PRED" --mode r0   --output "$OUT/meds_r0.parquet"
 
-# --- (c) ACES on the task ------------------------------------------------------------------------
-aces-cli cohort_dir="$HERE" cohort_name=ami_full data.standard=meds data.path="$MEDS_FLAT" \
-  output_filepath="$OUT/aces_full.parquet"
+# --- (c) ACES on the resolved task ($PRED holds both predicates and windows) ----------------------
+"$ACES_CLI" cohort_dir="$(dirname "$PRED")" cohort_name="$(basename "$PRED" .yaml)" \
+  data.standard=meds data.path="$MEDS_FLAT" output_filepath="$OUT/aces_full.parquet"
 
 # --- (d) compare (identical cmp1 on every pair) --------------------------------------------------
 cd "$HERE/.."
