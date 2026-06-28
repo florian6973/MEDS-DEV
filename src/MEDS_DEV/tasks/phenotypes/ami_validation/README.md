@@ -32,6 +32,8 @@ Three views of the *same* CUMC patients are compared, exact `(subject, second)`:
 | [`../reproduce_benchmark.py`](../reproduce_benchmark.py) | OMOP-side reference (the SQL ladder) + `cmp1` / `load_cohort_file` |
 | [`run_validation.sh`](run_validation.sh) | one-shot: ACES vs `reproduce_meds` vs `reproduce_benchmark` |
 | [`MAPPING.md`](MAPPING.md) | criterion-by-criterion benchmark→ACES mapping + every issue hit |
+| [`PORTING.md`](PORTING.md) | how to adapt the task to a new MEDS dataset |
+| [`port_check.py`](port_check.py) | porting diagnostics: scheme inventory + supportability + predicate smoke-test |
 
 ## 0. Build the OMOP-MEDS dataset (keep visit-end + observation periods)
 
