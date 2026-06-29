@@ -1,32 +1,30 @@
-# AMI at-risk -> 1-year AMI. Full-fidelity reAIM-Lab benchmark, declarative ACES.
+# AMI at-risk -> 1-year AMI (reAIM-Lab benchmark). Declarative ACES; requires the `interval_logic`
+# fork (for `during`).
 #
-# Requires the ACES `interval_logic` fork (for `during`) + meds>=0.4. Encodes the LIVE ATLAS-label
-# cohort. Validated ACES == reference = 0/0, ~0.07% $H<->MEDS ETL drift (recall ~99%, PPV ~100%,
-# same prevalence). Design notes + validation harness live in `validation/` (not committed).
-#
-# Base predicates are `???` -- supply per dataset in predicates/<DATASET>/ami.yaml (see README.md).
-# Published variant (CS4 corroboration: >=2 OR +smoking) splits `risk_entry` back into a direct set
-# + an embedding set and uses a `within(cs4, smoking)` predicate + `has_any` -- see validation/SPEC.md.
+# To adapt to a dataset: resolve each `???` base predicate into that build's codes and put them in
+# predicates/<DATASET>/<scheme>.yaml (see README.md). The task needs the MEDS to emit visit start+end
+# and observation_period start+end; if the build lacks them, drop the encounter / depth / cohort-end
+# windows.
 
 predicates:
-  ami: "???"                 # Acute-MI (Case CS3) start
+  ami: "???"                 # Acute-MI diagnosis (Case CS3)
   ip_er_start: "???"         # inpatient/ER admission (Case CS2) start
   ip_er_end: "???"           # inpatient/ER discharge (Case CS2) end
   any_visit: "???"           # any visit start (the trigger universe)
-  risk_entry: "???"          # at-risk inclusion: CS1 differential U CS3 ischemic-heart-disease U CS4 (GloVe-related)
+  risk_entry: "???"          # at-risk inclusion: differential (CS1) U ischemic-heart-disease (CS3) U GloVe-related (CS4)
   obs_period_start: "???"    # observation_period start
   obs_period_end: "???"      # observation_period end
-  condition_or_drug: "???"   # any condition/drug event (recent-activity gate; widen to the dataset's vocabs)
+  condition_or_drug: "???"   # any condition/drug event (recent-activity gate)
 
-  ami_encounter:             # #2: an AMI occurring DURING an inpatient/ER stay
+  ami_encounter:             # an AMI occurring DURING an inpatient/ER stay
     during: { event: ami, opens: ip_er_start, closes: ip_er_end, closed: both }
-  visit_in_obs:              # cohort-end: a visit inside an observation period
+  visit_in_obs:              # a visit inside an observation period
     during: { event: any_visit, opens: obs_period_start, closes: obs_period_end, closed: left }
 
-trigger: visit_in_obs        # every visit, restricted to inside an observation period
+trigger: visit_in_obs        # every visit, restricted to inside an observation period (cohort-end bound)
 
 windows:
-  at_risk_entry:             # entered the at-risk cohort (CS1 U CS3 U CS4)
+  at_risk_entry:             # entered the at-risk cohort
     start: null
     end: trigger
     start_inclusive: True
@@ -34,14 +32,14 @@ windows:
     index_timestamp: end
     has: { risk_entry: (1, None) }
 
-  no_prior_ami:              # first-AMI: no prior ENCOUNTER-AMI before the trigger
+  no_prior_ami:              # no prior encounter-AMI before the trigger
     start: null
     end: trigger
     start_inclusive: True
     end_inclusive: False
     has: { ami_encounter: (None, 0) }
 
-  sufficient_history:        # >=2yr of observation before the trigger (earliest obs_start)
+  sufficient_history:        # >=2yr of observation before the trigger
     start: null
     end: trigger - 730d
     start_inclusive: True
@@ -55,7 +53,7 @@ windows:
     end_inclusive: True
     has: { condition_or_drug: (1, None) }
 
-  target:                    # outcome: an encounter-AMI within the next year
+  target:                    # encounter-AMI within the next year
     start: trigger
     end: start + 365d
     start_inclusive: False
