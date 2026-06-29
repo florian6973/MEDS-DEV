@@ -23,10 +23,19 @@ For `ami` the base predicates are: `ami`, `ip_er_start/end`, `any_visit`, `risk_
 `obs_period_start/end`, `condition_or_drug`.
 
 - **Coding scheme matters.** Standard-concept-id builds (OMOP-MEDS) use `<vocab>//<concept_id>//start`;
-  source-code builds (MIMIC) use e.g. `DIAGNOSIS//ICD//10//I2119`. Resolve into the dataset's scheme,
-  re-resolved from seeds through `concept_ancestor` (not the stale ATLAS snapshot).
-- **Drop unsupported windows.** No visit-end events → drop the `during` encounter restriction; no
-  observation_period → drop `sufficient_history` (depth) + the cohort-end trigger.
+  source-code builds (MIMIC, the v3_mapped CUMC) use e.g. `ICD10CM/I21.19`, `CIEL/…`. The *same*
+  clinical concept is a different token in each (concept_id `319039` vs its `ICD10CM`/`SNOMED`-source
+  codes), so a predicates file is **build-specific and the schemes are not interchangeable**. Resolve
+  into the dataset's scheme, re-resolved from seeds through `concept_ancestor` (not the stale ATLAS
+  snapshot). Name one file per build, e.g. `predicates/CUMC/ami_concept_id.yaml` (OMOP-MEDS) and
+  `predicates/CUMC/ami_source.yaml` (v3_mapped); point `dataset_predicates_path` at the matching one.
+- **The build must keep visit-end + observation periods.** The full task's `during` (encounter +
+  cohort-end) and depth gate need the MEDS to emit **visit start AND end** and **observation_period
+  start AND end**, retained from OMOP. OMOP-MEDS emits them only after two ETL config edits
+  (`OMOP_MEDS/configs/pre_MEDS.yaml` visit `reference_cols` → add `visit_concept_id`;
+  `event_configs.yaml` visit/obs `time:` → the `*_date` columns) — else visits/obs are **silently
+  dropped**. A build without visit-end / obs-period can only run the **approximation** (drop the
+  encounter restriction, the depth gate, and the cohort-end trigger).
 - **Smoke-test** every predicate against the MEDS (0 matches = wrong scheme).
 
 > `ami.yaml` requires the ACES `interval_logic` fork (for `during`). The validation harness, the
