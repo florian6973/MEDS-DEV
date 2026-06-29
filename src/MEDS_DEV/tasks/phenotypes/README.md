@@ -38,6 +38,4 @@ For `ami` the base predicates are: `ami`, `ip_er_start/end`, `any_visit`, `risk_
   encounter restriction, the depth gate, and the cohort-end trigger).
 - **Smoke-test** every predicate against the MEDS (0 matches = wrong scheme).
 
-> `ami.yaml` requires the ACES `interval_logic` fork (for `during`). The validation harness, the
-> design spec, and the porting guide live in `validation/` (not committed) — see its `README.md`,
-> `SPEC.md`, and `PORTING.md`.
+> `ami.yaml` requires the ACES `interval_logic` fork (for `during`). 
