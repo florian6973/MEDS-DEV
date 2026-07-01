@@ -1,0 +1,73 @@
+# masld_1 -- reAIM-Lab **ATLAS** MASLD cohort: at-risk on a first metabolic risk-factor dx ->
+# **MASLD diagnosis within 1yr** at each visit. The chronic-liver analogue of ami_1, and simpler:
+# the case is a PLAIN condition (no inpatient/ER encounter restriction), and the at-risk is a single
+# concept set at threshold 1 (no has_any / corroboration). Requires the `interval_logic` fork only
+# for `during` on the obs-period cohort-end (drop visit_in_obs if the build has no observation_period).
+#
+# VALIDATED on CUMC/OMOP (concept-id build, restricted case set) -- ACES translation exact (0/0 vs an
+# independent MEDS-Python reference; cohort-end scalar-vs-during also 0/0). The delivered benchmark
+# sample is FIRST-case (0 points post-first-diagnosis), which these windows match; the raw
+# cohort_pos_neg SQL is last-case but the shipped phenotype_sample restricts to pre-first-diagnosis.
+# See validation/MASLD_TASK_REPORT.md for the full fidelity ladder (incl. the concept_id-vs-source
+# +24%/-20% delta and the 0.019% drug-ETL residual).
+#
+# ConceptSet 4 "MASLD risk factor" (12 conditions, +descendants) -> masld_at_risk
+# ConceptSet 5 "MASLD Diagnosis - ICD Only" (6 ICD codes, NO descendants) -> masld
+#
+# To adapt to a dataset: resolve each ??? into that build's codes in predicates/<DATASET>/masld_1.yaml.
+# Coding scheme matters: the standard concept_id build cannot reproduce ICD-Only exactly (194984
+# "Disease of liver" is dual-use); the source (v3_mapped) ICD build is the faithful path.
+
+predicates:
+  masld: "???"               # MASLD diagnosis (case, CS5: 571.5/571.8/571.9, K75.81, K76.0, K76.9 -- ICD only, no descendants)
+  masld_at_risk: "???"       # metabolic risk factor (CS4: 12 conditions, descendants included)
+  any_visit: "???"           # any visit start (the trigger universe)
+  obs_period_start: "???"    # observation_period start
+  obs_period_end: "???"      # observation_period end
+  condition_or_drug: "???"   # any condition/drug event (recent-activity gate)
+
+  visit_in_obs:              # a visit inside an observation period (cohort-end bound) -- drop if no obs-period
+    during: { event: any_visit, opens: obs_period_start, closes: obs_period_end, closed: left }
+
+trigger: visit_in_obs        # every visit, restricted to inside an observation period
+
+windows:
+  at_risk_entry:             # entered the at-risk cohort: a metabolic risk-factor dx before the visit
+    start: null
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+    has:
+      masld_at_risk: (1, None)
+
+  no_prior_masld:            # no prior MASLD dx before the visit (first-MASLD)
+    start: null
+    end: trigger
+    start_inclusive: True
+    end_inclusive: False
+    has:
+      masld: (None, 0)
+
+  sufficient_history:        # >=2yr of observation before the visit
+    start: null
+    end: trigger - 730d
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      obs_period_start: (1, None)
+
+  recent_activity:           # >=1 condition/drug in the prior 2yr
+    start: end - 730d
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      condition_or_drug: (1, None)
+
+  target:                    # MASLD dx within the next year (no encounter restriction).
+    start: trigger             # start-INCLUSIVE: a case exactly at the visit is positive (SQL: case_start
+    end: start + 365d          # == visit is not "before", and is <= visit+1yr -> b=1). [t, t+365d].
+    start_inclusive: True
+    end_inclusive: True
+    label: masld

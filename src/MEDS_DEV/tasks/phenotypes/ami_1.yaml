@@ -1,10 +1,12 @@
-# AMI at-risk -> 1-year AMI (reAIM-Lab benchmark). Declarative ACES; requires the `interval_logic`
-# fork (for `during`).
+# ami_1 -- the reAIM-Lab **ATLAS** AMI cohort: at-risk (ischemic-heart-disease / differential dx) ->
+# 1-year **incident AMI during an inpatient/ER encounter**. Visit-anchored, first-AMI. Declarative
+# ACES; requires the `interval_logic` fork (for `during`). (ami_2 is the operational, discharge-
+# anchored cohort_extract definition -- a different cohort; see README.md.)
 #
 # To adapt to a dataset: resolve each `???` base predicate into that build's codes and put them in
-# predicates/<DATASET>/<scheme>.yaml (see README.md). The task needs the MEDS to emit visit start+end
-# and observation_period start+end; if the build lacks them, drop the encounter / depth / cohort-end
-# windows.
+# predicates/<DATASET>/ami_1_<scheme>.yaml (see README.md). The task needs the MEDS to emit visit
+# start+end and observation_period start+end; if the build lacks them, drop the encounter / depth /
+# cohort-end windows.
 
 predicates:
   ami: "???"                 # Acute-MI diagnosis (Case CS3)

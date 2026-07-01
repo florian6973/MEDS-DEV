@@ -1,0 +1,58 @@
+# ami_2 -- the reAIM-Lab **operational** AMI cohort (the `cohort_extract.py` definition): every
+# hospital/ED **discharge** of an at-risk patient is a prediction point; label = AMI within 1 year.
+# Distinct from ami_1 (the ATLAS, visit-anchored, encounter-bound, first-AMI cohort). Requires the
+# `interval_logic` ACES fork (for `has_any`). Validated on MIMIC-IV -- see README.md and
+# validation/AMI_TASK_REPORT.md (Python reproduction is exact; the ACES task is exact in membership
+# and labeling modulo three documented MIMIC->MEDS *build* residuals: episode-dedup, the MEDS_BIRTH
+# observation-anchor burn-in, and the dropped non-admitted-ED discharges).
+#
+# To adapt to a dataset: resolve each `???` into that build's codes in predicates/<DATASET>/ami_2.yaml.
+
+predicates:
+  ami_at_risk: "???"        # ischemic-heart-disease / differential-for-AMI diagnosis
+  crf: "???"                # clinical risk factor (diabetes, hypertension, obesity, CKD, dyslipidemia, ...)
+  ami_case: "???"           # acute-MI diagnosis (the outcome)
+  hospital_discharge: "???" # inpatient discharge
+  ed_only_discharge: "???"  # non-admitted ("treat-and-release") ED discharge. In MIMIC this is
+                            # transfers.outtime where hadm_id is null; the standard MIMIC->MEDS build
+                            # DROPS it -- resolve to a never-match there (task is then hospital-only).
+  clinical_event: "???"     # any non-birth timed event (the observation_start / recent-activity basis)
+
+  discharge:                # the trigger universe: inpatient + non-admitted-ED discharges
+    expr: or(hospital_discharge, ed_only_discharge)
+
+trigger: discharge          # every discharge is a prediction point (binary: all of them)
+
+windows:
+  at_risk_entry:            # entered the at-risk cohort: an at-risk code OR >=2 clinical risk factors
+    start: null
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+    has_any:                # fork: list of constraint blocks = OR (a single `has` can't OR thresholds)
+      - ami_at_risk: (1, None)
+      - crf: (2, None)
+
+  sufficient_history:       # >=2yr of (non-birth) history before the discharge
+    start: null
+    end: trigger - 730d
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      clinical_event: (1, None)
+
+  recent_activity:          # >=1 event in the prior 2yr
+    start: end - 730d
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      clinical_event: (1, None)
+
+  target:                   # AMI within the next year, strictly after the discharge
+    start: trigger
+    end: start + 365d
+    start_inclusive: False
+    end_inclusive: True
+    label: ami_case
