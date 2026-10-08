@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-meds-eic-ar-sup @ git+https://github.com/florian6973/meds-model-meds-eic-ar-sup.git@eaca10102efbc3007acfb261b2c230d08db92750#subdirectory=models/03_07_meds_eic_ar_sup
+meds-eic-ar-sup @ git+https://github.com/florian6973/meds-model-meds-eic-ar-sup.git@b7b30a5130e6e0879b1766fbd0006e27e0341a68

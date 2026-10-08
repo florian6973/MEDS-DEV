@@ -1,5 +1,5 @@
 # Private source repository; configure Git credentials before installation.
-motor-lp @ git+https://github.com/florian6973/meds-model-motor-lp.git@e7a9e00d2e63a7c008d947c95291d3192bc8d5bc#subdirectory=models/02_09_motor_lp
+motor-lp @ git+https://github.com/florian6973/meds-model-motor-lp.git@d8cf883bdfd66c33dedb0370f29ac35777a0248c
 ora @ git+https://github.com/florian6973/femr_chao_meds_v3.git@5adf7c6428a61538ff498075954165b8de978b3c
 meds_reader==0.1.13
 xformers==0.0.29.post3

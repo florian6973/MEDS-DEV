@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-icu-xgboost @ git+https://github.com/florian6973/meds-model-icu-xgboost.git@3b71e940886609a8808bca135951d4095021cbb7#subdirectory=models/01_21_icu_xgboost
+icu-xgboost @ git+https://github.com/florian6973/meds-model-icu-xgboost.git@718eefc2d4caa661e4fb22d5811ba59ffb81d4e7

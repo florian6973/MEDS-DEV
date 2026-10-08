@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-retain @ git+https://github.com/florian6973/meds-model-retain.git@003bacb69ba901ff00c54c9d86f8aa3e9ec996d9#subdirectory=models/01_19_retain
+retain @ git+https://github.com/florian6973/meds-model-retain.git@74d10089eb85e54bd576cdcf2249dc43383ef91d

@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 from omegaconf import OmegaConf
@@ -44,9 +44,7 @@ def test_private_model_source_is_pinned(name: str) -> None:
     assert requirement.url.startswith(f"git+https://github.com/florian6973/{name}.git@")
     url = urlsplit(requirement.url.removeprefix("git+"))
     assert re.fullmatch(r"[0-9a-f]{40}", url.path.rsplit("@", 1)[1])
-    fragment = parse_qs(url.fragment)
-    assert len(fragment["subdirectory"]) == 1
-    assert re.fullmatch(r"models/[a-z0-9_]+", fragment["subdirectory"][0])
+    assert not url.fragment, "Model packages must install from the repository root"
     for dependency in dependencies:
         Requirement(dependency)
 

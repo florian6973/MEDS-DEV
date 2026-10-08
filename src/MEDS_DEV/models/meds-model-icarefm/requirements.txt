@@ -1,5 +1,5 @@
 # Private source repository; configure Git credentials before installation.
-icarefm @ git+https://github.com/florian6973/meds-model-icarefm.git@fa2bbf4329f2786634169463b72586946067514a#subdirectory=models/03_10_icarefm
+icarefm @ git+https://github.com/florian6973/meds-model-icarefm.git@ef40dc2745122303a6dd04af6a3e10197c90c02f
 ora @ git+https://github.com/florian6973/femr_chao_meds_v3.git@5adf7c6428a61538ff498075954165b8de978b3c
 meds_reader==0.1.16
 transformers[torch]>=4.44,<5

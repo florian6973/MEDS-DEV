@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-meds-tab-lr-port @ git+https://github.com/florian6973/meds-model-meds-tab-lr.git@1072adf7db61e100807e5a4d735193993ee2f2bd#subdirectory=models/00_02_meds_tab_lr
+meds-tab-lr-port @ git+https://github.com/florian6973/meds-model-meds-tab-lr.git@bd40c09d1252f67d7d3b4b34823cebbe927ea2b5

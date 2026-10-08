@@ -1,7 +1,8 @@
 # Private MEDS model registrations
 
 These 15 registrations use the individual private `florian6973/meds-model-*` repositories.
-Each requirements file pins a full Git commit and the preserved `models/...` package subdirectory.
+Each requirements file pins a full Git commit and installs the package from the repository root.
+The model repositories no longer require a `#subdirectory` fragment.
 Future model development belongs in those repositories. Update the pin and command descriptor here
 after reviewing a new model revision; do not copy model implementation code into MEDS-DEV.
 
@@ -81,7 +82,7 @@ paper's historical implementation revision.
 ## Registration validation (2026-10-08)
 
 - Registry and command-wiring checks: 57 passed, including all 15 new registrations.
-- All 15 pinned source packages built and installed through authenticated Git using `uv pip install --no-deps` in a disposable Python 3.12 environment. Runtime dependencies and model training were not
+- All 15 pinned source packages built and installed from their repository roots through authenticated Git using `uv pip install --no-deps` in a disposable Python 3.12 environment. Runtime dependencies and model training were not
     exercised by that package-install check.
 - All applicable pre-commit hooks passed for the changed files.
 - The fast suite on Windows had 107 passes and 10 failures; unmodified upstream `dev` at

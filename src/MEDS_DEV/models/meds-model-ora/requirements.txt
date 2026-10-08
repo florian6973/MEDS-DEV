@@ -1,5 +1,5 @@
 # Private source repository; configure Git credentials before installation.
-meds-ora @ git+https://github.com/florian6973/meds-model-ora.git@a48c10cbdb105ad9c5ceb019b67f404d802712af#subdirectory=models/03_08_ora
+meds-ora @ git+https://github.com/florian6973/meds-model-ora.git@0667969892f7469f2ffed5971c94098021bbf3a5
 ora @ git+https://github.com/florian6973/femr_chao_meds_v3@5adf7c6428a61538ff498075954165b8de978b3c
 meds_reader==0.1.16
 xformers==0.0.35

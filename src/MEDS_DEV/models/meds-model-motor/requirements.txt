@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-motor @ git+https://github.com/florian6973/meds-model-motor.git@8475e6ef1ee9a39846a0ae5a6e37403f2448b0fe#subdirectory=models/02_09_motor
+motor @ git+https://github.com/florian6973/meds-model-motor.git@ce686d0fb0c70c3feeb232785657b67ec5080dbe

@@ -3,8 +3,8 @@
 meds-tab / XGBoost tabular baseline at the MIMICIV_TUTORIAL featurization, run at scale on the cluster.
 
 - Implementation: [florian6973/meds-model-meds-tab-large](https://github.com/florian6973/meds-model-meds-tab-large) (private).
-- Pinned revision: `69053084cd5bbd278a26b504440823af4b23d0ed`.
-- Package directory: `models/00_01_meds_tab`.
+- Pinned revision: `0f1e2ab059db4c8def2477486430204ce5a444f7`.
+- Package directory: repository root (`.`).
 - Python requirement: `>=3.11`.
 - Workflow: Supervised training and prediction.
 - Dataset predicates argument: not used.
@@ -14,7 +14,7 @@ meds-tab / XGBoost tabular baseline at the MIMICIV_TUTORIAL featurization, run a
 Read [private model setup](../PRIVATE_MODELS.md) for authentication, runtime requirements,
 and the full-run command. Set `model=meds-model-meds-tab-large`.
 
-The [pinned implementation documentation](https://github.com/florian6973/meds-model-meds-tab-large/blob/69053084cd5bbd278a26b504440823af4b23d0ed/models/00_01_meds_tab/README.md) describes the architecture, inputs,
+The [pinned implementation documentation](https://github.com/florian6973/meds-model-meds-tab-large/blob/0f1e2ab059db4c8def2477486430204ce5a444f7/README.md) describes the architecture, inputs,
 configuration, hardware requirements, upstream dependencies, validation evidence, and limitations.
 This registration uses the implementation's command slots and retains its additional runtime
 requirements. Dependencies remain isolated from the MEDS-DEV environment.
