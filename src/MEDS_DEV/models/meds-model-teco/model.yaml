@@ -1,0 +1,15 @@
+metadata:
+  description: TECO implemented against the minimal MEDS model contract.
+  links:
+    - https://github.com/florian6973/meds-model-teco
+  contacts:
+    - name: Florent Pollet
+      email: ffp2106@cumc.columbia.edu
+commands:
+  supervised:
+    train: |-
+      meds-model preprocess_data external_meds_dir={dataset_dir} external_predicates_file={predicates_path} output_data_dir={output_dir}/data do_overwrite=true
+      meds-model supervised_train input_data_dir={output_dir}/data external_labels_dir={labels_dir} output_supervised_model_dir={output_dir}/model do_overwrite=true
+    predict:
+      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir}
+      splits=[{split}] output_predictions_dir={output_dir}/predictions do_overwrite=true

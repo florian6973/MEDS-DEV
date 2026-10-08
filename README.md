@@ -47,6 +47,9 @@ To see supported MEDS-DEV tasks, datasets, and models, see the links below:
 2. [Datasets](src/MEDS_DEV/datasets)
 3. [Models](src/MEDS_DEV/models)
 
+The [private MEDS model registrations](src/MEDS_DEV/models/PRIVATE_MODELS.md) describe the 15
+`meds-model-*` entries, their pinned source repositories, authentication, and runtime requirements.
+
 Note that this repository is _not_ a place where functional code is stored. Rather, this repository stores
 configuration files, training recipes, results, etc. for the MEDS-DEV benchmarking effort -- runnable code
 will often come from other repositories, with operationalized instructions on how to leverage that external

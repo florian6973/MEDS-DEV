@@ -1,0 +1,20 @@
+metadata:
+  description: MOTOR implemented against the minimal MEDS model contract.
+  links:
+    - https://github.com/florian6973/meds-model-motor
+  contacts:
+    - name: Florent Pollet
+      email: ffp2106@cumc.columbia.edu
+commands:
+  unsupervised:
+    train: |-
+      meds-model preprocess_data external_meds_dir={dataset_dir} external_predicates_file={predicates_path} output_data_dir={output_dir}/data do_overwrite=true ${oc.env:MOTOR_PREPROCESS_ARGS,''}
+      meds-model pretrain input_data_dir={output_dir}/data output_pretrained_model_dir={output_dir}/pretrained do_overwrite=true ${oc.env:MOTOR_PRETRAIN_ARGS,''}
+  supervised:
+    train:
+      meds-model supervised_train input_data_dir={model_initialization_dir}/data external_labels_dir={labels_dir}
+      input_pretrained_model_dir={model_initialization_dir}/pretrained external_predicates_file={predicates_path}
+      output_supervised_model_dir={output_dir}/model do_overwrite=true ${oc.env:MOTOR_SUPERVISED_ARGS,''}
+    predict:
+      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir}
+      splits=[{split}] output_predictions_dir={output_dir}/predictions do_overwrite=true ${oc.env:MOTOR_PREDICT_ARGS,''}

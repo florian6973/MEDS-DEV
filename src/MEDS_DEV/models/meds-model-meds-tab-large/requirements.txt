@@ -1,0 +1,2 @@
+# Private source repository; configure Git credentials before installation.
+meds-tab-port @ git+https://github.com/florian6973/meds-model-meds-tab-large.git@69053084cd5bbd278a26b504440823af4b23d0ed#subdirectory=models/00_01_meds_tab

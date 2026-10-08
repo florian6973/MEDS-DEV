@@ -1,0 +1,7 @@
+# Private source repository; configure Git credentials before installation.
+motor-cp @ git+https://github.com/florian6973/meds-model-motor-cp.git@0c360b47ce7bf0c79844eb11a8dd1648d612ba4c#subdirectory=models/02_09_motor_cp
+femr @ git+https://github.com/ChaoPang/femr.git@baf77ccec8034e8e44d05c360dbff7714f1b9303
+meds_reader==0.1.13
+xformers==0.0.32.post2
+torch==2.8.0
+transformers[torch]>=4.44,<5

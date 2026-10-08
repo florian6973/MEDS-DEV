@@ -1,0 +1,20 @@
+metadata:
+  description: MEDS-EIC-AR implemented against the minimal MEDS model contract.
+  links:
+    - https://github.com/florian6973/meds-model-meds-eic-ar
+  contacts:
+    - name: Florent Pollet
+      email: ffp2106@cumc.columbia.edu
+commands:
+  unsupervised:
+    train: |-
+      meds-model preprocess_data external_meds_dir={dataset_dir} output_data_dir={output_dir}/data do_demo={demo} do_overwrite=true
+      meds-model pretrain input_data_dir={output_dir}/data output_pretrained_model_dir={output_dir}/pretrained do_demo={demo} do_overwrite=true
+  supervised:
+    train:
+      meds-model supervised_train input_data_dir={model_initialization_dir}/data external_labels_dir={labels_dir}
+      input_pretrained_model_dir={model_initialization_dir}/pretrained output_supervised_model_dir={output_dir}/model
+      do_demo={demo} do_overwrite=true
+    predict:
+      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir}
+      splits=[{split}] output_predictions_dir={output_dir}/predictions do_demo={demo} do_overwrite=true

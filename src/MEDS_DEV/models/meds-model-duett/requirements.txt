@@ -1,0 +1,2 @@
+# Private source repository; configure Git credentials before installation.
+duett @ git+https://github.com/florian6973/meds-model-duett.git@9ba453064ad9e11a6f45cf4d2e48d296973638d6#subdirectory=models/02_11_duett

@@ -1,0 +1,2 @@
+# Private source repository; configure Git credentials before installation.
+behrt @ git+https://github.com/florian6973/meds-model-behrt.git@fa6cd4b337534775213393e94ed9219f3c112007#subdirectory=models/02_19_behrt

@@ -1,0 +1,22 @@
+# Private source repository; configure Git credentials before installation.
+meds-ora @ git+https://github.com/florian6973/meds-model-ora.git@a48c10cbdb105ad9c5ceb019b67f404d802712af#subdirectory=models/03_08_ora
+ora @ git+https://github.com/florian6973/femr_chao_meds_v3@5adf7c6428a61538ff498075954165b8de978b3c
+meds_reader==0.1.16
+xformers==0.0.35
+torch==2.10.0
+transformers[torch]>=4.44,<5
+meds==0.3.3
+hydra-core>=1.3
+wandb>=0.16
+datasets>=3,<6
+polars>=1
+numpy>=1.26,<2
+scipy>=1.11
+scikit-learn>=1.3
+pandas>=2.2
+msgpack>=1.0.5
+zstandard>=0.18
+dill>=0.3.7
+safetensors>=0.4.5
+tqdm>=4.60
+pyarrow>=15
