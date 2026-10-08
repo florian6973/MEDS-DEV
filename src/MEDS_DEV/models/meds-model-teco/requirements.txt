@@ -1,2 +1,2 @@
 # Private source repository; configure Git credentials before installation.
-teco @ git+https://github.com/florian6973/meds-model-teco.git@08c11ac0fbcfb8b73afe4b6cd614519371e4a4b5
+teco @ git+https://github.com/florian6973/meds-model-teco.git@09119b5267833d8eea100031f03f75085c3efe41

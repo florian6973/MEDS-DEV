@@ -12,7 +12,7 @@ after reviewing a new model revision; do not copy model implementation code into
 | `meds-model-meds-tab-lr`     | [florian6973/meds-model-meds-tab-lr](https://github.com/florian6973/meds-model-meds-tab-lr)         | `>=3.11`           |
 | `meds-model-teco`            | [florian6973/meds-model-teco](https://github.com/florian6973/meds-model-teco)                       | `>=3.11`           |
 | `meds-model-retain`          | [florian6973/meds-model-retain](https://github.com/florian6973/meds-model-retain)                   | `>=3.11`           |
-| `meds-model-icu-xgboost`     | [florian6973/meds-model-icu-xgboost](https://github.com/florian6973/meds-model-icu-xgboost)         | `>=3.11`           |
+| `meds-model-icu-xgboost`     | [florian6973/meds-model-icu-xgboost](https://github.com/florian6973/meds-model-icu-xgboost)         | `>=3.12`           |
 | `meds-model-motor`           | [florian6973/meds-model-motor](https://github.com/florian6973/meds-model-motor)                     | `>=3.11`           |
 | `meds-model-motor-cp`        | [florian6973/meds-model-motor-cp](https://github.com/florian6973/meds-model-motor-cp)               | `>=3.11`           |
 | `meds-model-motor-ft`        | [florian6973/meds-model-motor-ft](https://github.com/florian6973/meds-model-motor-ft)               | `>=3.11`           |
@@ -33,7 +33,7 @@ Do not embed tokens in requirements files, URLs, or committed configuration.
 
 Use Linux and a compatible Python interpreter for model execution; Python 3.12 satisfies the declared
 minimum for all registrations. MEDS-DEV creates model environments using its own Python interpreter,
-so run MEDS-DEV under Python 3.12 for the MEDS-EIC-AR variants. GPU models also need their documented
+so run MEDS-DEV under Python 3.12 for ICU-XGBoost and the MEDS-EIC-AR variants. GPU models also need their documented
 CUDA, architecture, and dependency support. In particular, MOTOR-CP, MOTOR-FT, MOTOR-LP, ORA, and iCareFM
 have upstream native/GPU dependencies; an interface match alone does not verify their installation.
 
@@ -91,3 +91,8 @@ paper's historical implementation revision.
 - Packaging fixes were committed in the new private model repositories: MOTOR-CP includes its existing
     FEMR helper in its wheel, and ICU-XGBoost avoids adding its concept YAML files twice. Their
     registrations pin those fixed revisions; model computation was not changed.
+- Following the repository-root CI fixes, all 15 model repositories have successful `Model contract`
+    workflows at the registered revisions. The six updated repositories report 489 passed and 25 skipped
+    tests in total. Skips cover unavailable CUDA, opt-in MEDS-DEV/MIMIC integration, and absent sibling
+    source/artifacts; none are `model_stub` skips. The fixes align path/code fixtures and ICU-XGBoost's
+    Python minimum with the existing implementation; model computation and output guards are unchanged.
